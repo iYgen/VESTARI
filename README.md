@@ -20,7 +20,9 @@
 добавления ящика).
 
 ## Сборка
-Нужны JDK 17+ и Android SDK 35.
+**Установка:** скачайте [Vestari.apk](https://github.com/iYgen/VESTARI/raw/main/Vestari.apk) и откройте на телефоне (разрешите установку из этого источника).
+
+Для сборки нужны JDK 17+ и Android SDK 35.
 ```
 gradlew assembleRelease
 ```
