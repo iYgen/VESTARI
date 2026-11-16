@@ -81,7 +81,7 @@ fun MessageScreen(key: String) {
 
     var body by remember { mutableStateOf<MailBody?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var showImages by remember { mutableStateOf(false) }
+    var showImages by remember { mutableStateOf(Repository.settings.value.autoImages) }
     var moving by remember { mutableStateOf(false) }
 
     LaunchedEffect(key) {
@@ -232,11 +232,15 @@ private fun MailWebView(body: MailBody, showImages: Boolean) {
             }
         },
         update = { wv ->
+            // Картинки, вложенные в само письмо (data:), видны всегда; из интернета — по настройке или кнопке.
+            wv.settings.loadsImagesAutomatically = true
             wv.settings.blockNetworkImage = !showImages
-            wv.settings.loadsImagesAutomatically = showImages
-            if (wv.tag != page) {
-                wv.tag = page
-                wv.loadDataWithBaseURL(null, page, "text/html", "utf-8", null)
+            wv.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            // Перезагружаем страницу и при смене режима картинок, иначе кнопка «Показать картинки» ничего не меняла.
+            val tag = "$showImages|${page.hashCode()}"
+            if (wv.tag != tag) {
+                wv.tag = tag
+                wv.loadDataWithBaseURL("https://vestari.local/", page, "text/html", "utf-8", null)
             }
         },
         modifier = Modifier.fillMaxWidth(),

@@ -81,12 +81,25 @@ import app.vestari.ui.sharedCard
 import app.vestari.ui.theme.AppTheme
 import app.vestari.ui.theme.Palettes
 import kotlinx.coroutines.launch
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.runtime.key
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import app.vestari.data.ListStyle
+import app.vestari.ui.components.spacing
 
 @Composable
 private fun ScreenTitle(text: String) {
+    val settings by Repository.settings.collectAsState()
     Text(
-        text, style = MaterialTheme.typography.headlineLarge,
-        modifier = Modifier.statusBarsPadding().padding(top = 16.dp, bottom = 12.dp),
+        text, style = titleStyle(settings.titleSize),
+        modifier = Modifier.statusBarsPadding().padding(top = 14.dp, bottom = 10.dp),
     )
 }
 
@@ -130,7 +143,8 @@ fun FoldersScreen() {
         item {
             SoftRow(Icons.Rounded.Add, "Создать папку", tint = MaterialTheme.colorScheme.primary) { creating = true }
             Text(
-                "Удерживайте папку, чтобы переименовать или удалить. Порядок меняется в шторке аккаунтов на экране «Почта».",
+                "Удерживайте папку, чтобы переименовать или удалить. Порядок папок — в Профиле, раздел «Порядок папок». " +
+                    "Папки, созданные в самой почте (например, в Mail.ru), появляются здесь автоматически.",
                 style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(12.dp),
             )
         }
@@ -207,6 +221,7 @@ fun SearchScreen() {
     val messagesMap by Repository.messages.collectAsState()
     val categories by Repository.categories.collectAsState()
     val assignments by Repository.assignments.collectAsState()
+    val settings by Repository.settings.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -224,25 +239,18 @@ fun SearchScreen() {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(settings.listStyle.spacing()),
     ) {
         item {
-            Column {
+            Column(Modifier.padding(bottom = 6.dp)) {
                 ScreenTitle("Поиск")
-                TextField(
-                    query, { query = it },
-                    placeholder = { Text("Отправитель, тема или текст") },
-                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, "Очистить") }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(50),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = AppTheme.extra.card, unfocusedContainerColor = AppTheme.extra.card,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                SearchField(query, { query = it }, Modifier.focusRequester(focus))
+                val total = remember(messagesMap) { messagesMap.values.sumOf { it.size } }
+                Text(
+                    if (query.trim().length >= 2) "Найдено: ${results.size}${if (results.size == 200) "+" else ""}"
+                    else "Ищу по $total скачанным письмам: отправитель, тема, начало текста",
+                    style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+                    modifier = Modifier.padding(start = 16.dp, top = 8.dp),
                 )
             }
         }
@@ -255,11 +263,48 @@ fun SearchScreen() {
         items(results, key = { it.key }) { m ->
             MessageCard(
                 m, categoryOf(m, assignments)?.let { catById[it] },
+                style = settings.listStyle, showPreview = settings.showPreview,
                 modifier = Modifier.animateItem().sharedCard(m.key),
                 onClick = { nav.push(Route.Message(m.key)) },
                 onLongClick = {},
                 onStar = { Repository.setFlagged(m, !m.flagged) },
             )
+        }
+    }
+}
+
+/** Поле поиска: аккуратная «пилюля» фиксированной высоты, подсказка в одну строку. */
+@Composable
+private fun SearchField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val focusedColor = MaterialTheme.colorScheme.primary
+    var focused by remember { mutableStateOf(false) }
+    val border by animateColorAsState(if (focused) focusedColor.copy(alpha = 0.5f) else Color.Transparent, label = "searchBorder")
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(RoundedCornerShape(50))
+            .background(AppTheme.extra.card)
+            .border(1.5.dp, border, RoundedCornerShape(50))
+            .padding(start = 16.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Search, null, tint = AppTheme.extra.muted, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) {
+                Text("Поиск по письмам", color = AppTheme.extra.muted, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+            }
+            BasicTextField(
+                value, onChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(focusedColor),
+                modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+            )
+        }
+        if (value.isNotEmpty()) {
+            IconButton(onClick = { onChange("") }) { Icon(Icons.Rounded.Close, "Очистить", tint = AppTheme.extra.muted) }
         }
     }
 }
@@ -328,6 +373,34 @@ fun ProfileScreen() {
             }
         }
 
+        Card {
+            Text("Вид списка писем", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Segmented(ListStyle.entries.map { it.title }, settings.listStyle.ordinal) { i ->
+                Repository.updateSettings { it.copy(listStyle = ListStyle.entries[i]) }
+            }
+            Text(settings.listStyle.hint, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+                modifier = Modifier.padding(start = 8.dp, top = 6.dp))
+            Spacer(Modifier.height(16.dp))
+            Text("Размер заголовков", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Segmented(listOf("Маленький", "Средний", "Крупный"), settings.titleSize) { s ->
+                Repository.updateSettings { it.copy(titleSize = s) }
+            }
+            Spacer(Modifier.height(8.dp))
+            SwitchRow("Превью текста письма", "Первые строки письма под темой", settings.showPreview) { v ->
+                Repository.updateSettings { it.copy(showPreview = v) }
+            }
+            SwitchRow(
+                "Картинки в письмах сразу",
+                if (settings.autoImages) "Картинки загружаются при открытии письма"
+                else "Только по кнопке — рассылки не узнают, что письмо открыто",
+                settings.autoImages,
+            ) { v -> Repository.updateSettings { it.copy(autoImages = v) } }
+        }
+
+        Card { FolderOrder() }
+
         Card { app.vestari.update.UpdateCard() }
 
         Card {
@@ -341,7 +414,7 @@ fun ProfileScreen() {
                 Switch(settings.notifications, { v -> Repository.updateSettings { it.copy(notifications = v) } })
             }
             SoftRow(Icons.Outlined.Refresh, if (syncing) "Проверяю почту…" else "Проверить почту сейчас") {
-                scope.launch {
+                if (!syncing) scope.launch {
                     val fresh = Repository.sync()
                     toasts.show(if (fresh.isEmpty()) "Новых писем нет" else "Новых писем: ${fresh.size}")
                 }
@@ -369,6 +442,57 @@ fun ProfileScreen() {
             },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Отмена") } },
         )
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onChange(!checked) }.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
+        }
+        Switch(checked, onChange)
+    }
+}
+
+/** Порядок папок: стрелками вверх/вниз. Тот же порядок — в строке папок на экране «Почта». */
+@Composable
+private fun FolderOrder() {
+    val categories by Repository.categories.collectAsState()
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { expanded = !expanded }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Порядок папок", style = MaterialTheme.typography.titleMedium)
+            Text("Как папки идут в строке на экране «Почта»", style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
+        }
+        val rot by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+        Icon(Icons.Rounded.KeyboardArrowDown, null, modifier = Modifier.rotate(rot))
+    }
+    AnimatedVisibility(expanded) {
+        Column(Modifier.padding(top = 8.dp)) {
+            categories.forEachIndexed { i, c ->
+                key(c.id) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CategoryTile(c.id, iconFor(c.icon), c.name, 34.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { Repository.moveCategory(i, i - 1) }, enabled = i > 0) {
+                            Icon(Icons.Rounded.KeyboardArrowUp, "Выше")
+                        }
+                        IconButton(onClick = { Repository.moveCategory(i, i + 1) }, enabled = i < categories.lastIndex) {
+                            Icon(Icons.Rounded.KeyboardArrowDown, "Ниже")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

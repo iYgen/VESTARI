@@ -185,7 +185,6 @@ fun AddAccountScreen() {
                         }.onSuccess { acc ->
                             toasts.show("Ящик ${acc.email} подключён")
                             nav.pop()
-                            launch { Repository.sync(acc.id) }
                         }.onFailure { error = it.message ?: "Не удалось подключиться" }
                         busy = false
                     }

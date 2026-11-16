@@ -44,7 +44,16 @@ data class Category(
     val name: String,
     val icon: String,
     val builtin: Boolean = false,
+    /** Папка пришла с сервера (создана в самой почте, например в Mail.ru). */
+    val remote: Boolean = false,
 )
+
+/** Вид списка писем. */
+enum class ListStyle(val title: String, val hint: String) {
+    Cards("Карточки", "Крупно, с превью текста"),
+    Compact("Компактный", "Карточки ниже, превью в одну строку"),
+    List("Список", "Плотный список без карточек, как в почте на компьютере"),
+}
 
 @Serializable
 data class Settings(
@@ -54,7 +63,22 @@ data class Settings(
     /** null — все ящики сразу. */
     val selectedAccountId: String? = null,
     val notifications: Boolean = true,
+    /** Загружать картинки из интернета в письмах сразу (иначе — по кнопке). */
+    val autoImages: Boolean = true,
+    /** Серверные папки, которые пользователь удалил из списка, — заново не создаём. */
+    val ignoredFolders: Set<String> = emptySet(),
+    val listStyle: ListStyle = ListStyle.Compact,
+    /** Размер заголовка экрана: 0 — маленький, 1 — средний, 2 — крупный. */
+    val titleSize: Int = 0,
+    /** Показывать превью текста письма. */
+    val showPreview: Boolean = true,
 )
+
+/** Ход загрузки писем ящика: сколько уже скачано из общего числа на сервере. */
+data class SyncProgress(val loaded: Int = 0, val total: Int = 0, val active: Boolean = false) {
+    val fraction: Float get() = if (total <= 0) 0f else (loaded.toFloat() / total).coerceIn(0f, 1f)
+    val loading: Boolean get() = active && (total == 0 || loaded < total)
+}
 
 data class MailBody(val html: String?, val text: String?)
 

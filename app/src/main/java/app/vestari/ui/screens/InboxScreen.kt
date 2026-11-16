@@ -85,6 +85,95 @@ import app.vestari.ui.components.bouncyClick
 import app.vestari.ui.sharedCard
 import app.vestari.ui.theme.AppTheme
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import app.vestari.R
+import app.vestari.data.ListStyle
+import app.vestari.data.SyncProgress
+import app.vestari.ui.components.spacing
+import java.util.Locale
+
+/** Особый фильтр «Важные» — письма, отмеченные флажком (звёздочкой) в любой почте, в том числе в Mail.ru. */
+const val FLAGGED = "@flagged"
+
+/** Размер заголовка экрана из настроек: 0 — маленький, 1 — средний, 2 — крупный. */
+@Composable
+fun titleStyle(size: Int): TextStyle = when (size) {
+    2 -> MaterialTheme.typography.headlineLarge
+    1 -> MaterialTheme.typography.headlineMedium
+    else -> MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+}
+
+/** Логотип Vestari из ресурсов иконки приложения. */
+@Composable
+fun AppLogo(size: Dp) {
+    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.3f))) {
+        Image(painterResource(R.drawable.ic_launcher_background), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Image(painterResource(R.drawable.ic_launcher_foreground), null, modifier = Modifier.fillMaxSize().scale(1.45f))
+    }
+}
+
+/** Пока писем ещё нет — вместо пустого списка показываем ход загрузки. */
+@Composable
+private fun LoadingCard(p: SyncProgress) {
+    Surface(shape = RoundedCornerShape(28.dp), color = AppTheme.extra.card, modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) {
+        Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            val pulse = rememberInfiniteTransition(label = "logo")
+            val s by pulse.animateFloat(0.94f, 1.04f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulse")
+            Box(Modifier.scale(s)) { AppLogo(72.dp) }
+            Spacer(Modifier.height(18.dp))
+            Text("Загружаю почту", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (p.total == 0) "Подключаюсь к серверу и читаю список папок…"
+                else "Скачано ${fmt(p.loaded)} из ${fmt(p.total)} писем",
+                color = AppTheme.extra.muted, textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            if (p.total == 0) LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)))
+            else {
+                val f by animateFloatAsState(p.fraction, label = "loadCard")
+                LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Сначала появятся свежие письма, остальные докачаются в фоне и сами разложатся по папкам.",
+                style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/** Тонкая плашка над списком, пока докачиваются старые письма. */
+@Composable
+private fun LoadingBanner(p: SyncProgress) {
+    Surface(shape = RoundedCornerShape(18.dp), color = AppTheme.extra.accentSoft, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Text(
+                if (p.total == 0) "Проверяю почту…" else "Загружаю письма: ${fmt(p.loaded)} из ${fmt(p.total)} · ${(p.fraction * 100).toInt()}%",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Spacer(Modifier.height(8.dp))
+            val f by animateFloatAsState(p.fraction, label = "loadBanner")
+            LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50)))
+        }
+    }
+}
+
+private fun fmt(n: Int): String = "%,d".format(Locale("ru"), n).replace(',', ' ')
 
 /** Категория письма с учётом ручной раскладки. */
 fun categoryOf(m: MailMessage, assignments: Map<String, String>): String? {
@@ -108,6 +197,7 @@ fun InboxScreen() {
     val categories by Repository.categories.collectAsState()
     val assignments by Repository.assignments.collectAsState()
     val syncing by Repository.syncing.collectAsState()
+    val progressMap by Repository.progress.collectAsState()
 
     var moveTarget by remember { mutableStateOf<MailMessage?>(null) }
     var creatingFolder by remember { mutableStateOf(false) }
@@ -122,62 +212,104 @@ fun InboxScreen() {
     }
     val catById = categories.associateBy { it.id }
     val visible = remember(all, nav.folder, assignments) {
-        if (nav.folder == null) all else all.filter { categoryOf(it, assignments) == nav.folder }
+        when (nav.folder) {
+            null -> all
+            FLAGGED -> all.filter { it.flagged }
+            else -> all.filter { categoryOf(it, assignments) == nav.folder }
+        }
     }
     val unreadByCat = remember(all, assignments) {
         all.filter { !it.seen }.groupingBy { categoryOf(it, assignments) }.eachCount()
     }
+    val flaggedCount = remember(all) { all.count { it.flagged } }
+    // Прогресс загрузки: по выбранному ящику или суммарно по всем.
+    val progress = remember(progressMap, selectedId) {
+        val list = if (selectedId != null) listOfNotNull(progressMap[selectedId]) else progressMap.values.toList()
+        if (list.none { it.loading }) null
+        else SyncProgress(list.sumOf { it.loaded }, list.sumOf { it.total }, active = true)
+    }
+    val style = settings.listStyle
+    val listState = rememberLazyListState()
 
     LaunchedEffect(accounts.size) {
-        if (accounts.isNotEmpty() && !autoSynced) { autoSynced = true; Repository.sync() }
+        if (accounts.isNotEmpty() && !autoSynced) { autoSynced = true; Repository.refresh() }
     }
 
     Box(Modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = syncing,
-            onRefresh = { scope.launch { Repository.sync(selectedId) } },
+            onRefresh = { Repository.refresh(selectedId) },
             modifier = Modifier.fillMaxSize(),
         ) {
             LazyColumn(
                 Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 190.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(style.spacing()),
             ) {
                 item(key = "header") {
-                    Column(Modifier.statusBarsPadding().padding(top = 12.dp)) {
+                    Column(Modifier.statusBarsPadding().padding(top = 8.dp)) {
                         Header(
-                            avatar = { AccountAvatar(selectedAccount, 48.dp) },
-                            title = nav.folder?.let { catById[it]?.name } ?: "Входящие",
+                            avatar = { AccountAvatar(selectedAccount, 42.dp) },
+                            title = when (nav.folder) {
+                                null -> "Входящие"
+                                FLAGGED -> "Важные"
+                                else -> catById[nav.folder]?.name ?: "Входящие"
+                            },
+                            titleSize = settings.titleSize,
                             onAccounts = { nav.accountSheetOpen = true },
                             onSearch = { nav.tab = Tab.Search },
                             onCompose = { nav.push(Route.Compose()) },
                         )
                         if (accounts.isNotEmpty()) {
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(Modifier.height(8.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                                 AccountPill(selectedAccount?.email ?: "Все ящики") { nav.accountSheetOpen = true }
                             }
                         }
-                        Spacer(Modifier.height(14.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            FolderChip("Все", nav.folder == null, badge = 0) { nav.folder = null }
-                            categories.forEach { c ->
-                                FolderChip(c.name, nav.folder == c.id, badge = unreadByCat[c.id] ?: 0) {
-                                    nav.folder = if (nav.folder == c.id) null else c.id
-                                }
-                            }
-                            AddChip { creatingFolder = true }
-                        }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(8.dp))
                     }
+                }
+
+                // Папки — одной строкой, листаются вбок. Порядок меняется на вкладке «Папки».
+                item(key = "chips") {
+                    LazyRow(
+                        Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        item(key = "all") { FolderChip("Все", nav.folder == null, badge = 0) { nav.folder = null } }
+                        if (flaggedCount > 0) item(key = FLAGGED) {
+                            FolderChip("★ Важные", nav.folder == FLAGGED, badge = 0) {
+                                nav.folder = if (nav.folder == FLAGGED) null else FLAGGED
+                            }
+                        }
+                        items(categories, key = { it.id }) { c ->
+                            FolderChip(c.name, nav.folder == c.id, badge = unreadByCat[c.id] ?: 0) {
+                                nav.folder = if (nav.folder == c.id) null else c.id
+                            }
+                        }
+                        item(key = "add") { AddChip { creatingFolder = true } }
+                    }
+                }
+
+                if (progress != null && all.isNotEmpty()) {
+                    item(key = "progress") { LoadingBanner(progress) }
                 }
 
                 if (accounts.isEmpty()) {
                     item(key = "empty-accounts") { NoAccountsCard { nav.push(Route.AddAccount) } }
+                } else if (all.isEmpty() && (progress != null || syncing)) {
+                    item(key = "loading") { LoadingCard(progress ?: SyncProgress(active = true)) }
                 } else if (visible.isEmpty() && !syncing) {
                     item(key = "empty") {
                         Text(
-                            if (nav.folder == null) "Писем пока нет" else "В этой папке пусто",
+                            when (nav.folder) {
+                                null -> "Писем пока нет"
+                                FLAGGED -> "Нет писем, отмеченных флажком"
+                                else -> "В этой папке пусто"
+                            },
                             color = AppTheme.extra.muted, textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
                         )
@@ -187,6 +319,8 @@ fun InboxScreen() {
                 items(visible, key = { it.key }) { m ->
                     SwipeableMessage(
                         m = m,
+                        style = style,
+                        showPreview = settings.showPreview,
                         category = categoryOf(m, assignments)?.let { catById[it] },
                         showAccount = if (selectedId == null && accounts.size > 1) accounts.firstOrNull { it.id == m.accountId }?.email else null,
                         modifier = Modifier.animateItem(),
@@ -223,6 +357,7 @@ fun InboxScreen() {
 private fun Header(
     avatar: @Composable () -> Unit,
     title: String,
+    titleSize: Int,
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
@@ -236,10 +371,15 @@ private fun Header(
             Icon(Icons.Rounded.KeyboardArrowDown, "Аккаунты", tint = AppTheme.extra.muted)
         }
         Spacer(Modifier.width(10.dp))
-        Text(title, style = MaterialTheme.typography.headlineLarge, maxLines = 1, modifier = Modifier.weight(1f))
-        IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(28.dp)) }
+        Text(
+            title,
+            style = titleStyle(titleSize),
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
         IconButton(onClick = onCompose) {
-            Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+            Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
         }
     }
 }
@@ -276,6 +416,8 @@ private fun AddChip(onClick: () -> Unit) {
 @Composable
 private fun SwipeableMessage(
     m: MailMessage,
+    style: ListStyle,
+    showPreview: Boolean,
     category: Category?,
     showAccount: String?,
     modifier: Modifier,
@@ -307,7 +449,9 @@ private fun SwipeableMessage(
             )
             val iconScale by animateFloatAsState(if (state.progress > 0.3f) 1.2f else 0.9f, label = "swipeIcon")
             Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(color).padding(horizontal = 28.dp),
+                Modifier.fillMaxSize()
+                    .clip(RoundedCornerShape(if (style == ListStyle.Cards) 24.dp else 16.dp))
+                    .background(color).padding(horizontal = 28.dp),
                 contentAlignment = if (dir == SwipeToDismissBoxValue.EndToStart) Alignment.CenterEnd else Alignment.CenterStart,
             ) {
                 Icon(
@@ -325,6 +469,8 @@ private fun SwipeableMessage(
             m = m,
             category = category,
             showAccount = showAccount,
+            style = style,
+            showPreview = showPreview,
             modifier = Modifier.sharedCard(m.key),
             onClick = onOpen,
             onLongClick = onMove,
@@ -355,10 +501,7 @@ private fun ComposeFab(modifier: Modifier, onClick: () -> Unit) {
 private fun NoAccountsCard(onAdd: () -> Unit) {
     Surface(shape = RoundedCornerShape(28.dp), color = AppTheme.extra.card, modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) {
         Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(AppTheme.extra.accentSoft),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Outlined.MarkunreadMailbox, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp)) }
+            AppLogo(72.dp)
             Spacer(Modifier.height(16.dp))
             Text("Добавьте свою почту", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
