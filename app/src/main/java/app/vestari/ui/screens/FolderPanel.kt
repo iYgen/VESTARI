@@ -395,12 +395,12 @@ fun ServerFolderScreen(accountId: String, folder: String, title: String) {
     } }
     LaunchedEffect(nearEnd, hasMore, loading) { if (nearEnd && hasMore && !loading && !local) load(reset = false) }
 
-    Surface(Modifier.fillMaxSize(), color = AppTheme.extra.bgTop) {
+    Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.statusBarsPadding().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.pop() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    app.vestari.ui.components.BrandTitle(title, MaterialTheme.typography.titleLarge)
                     val total = if (local) list.size else Repository.remoteTotal(accountId, folder)
                     if (total != null) Text("$total писем", style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
                 }

@@ -91,6 +91,7 @@ sealed interface Route {
     data class ServerFolder(val accountId: String, val folder: String, val title: String) : Route
     data object AddAccount : Route
     data object Smart : Route
+    data object Appearance : Route
 }
 
 enum class Tab(val title: String, val icon: ImageVector) {
@@ -187,13 +188,10 @@ fun VestariApp(openMessageKey: String?, onOpenedFromNotification: () -> Unit) {
         BackHandler(enabled = nav.stack.size > 1) { nav.pop() }
         BackHandler(enabled = nav.stack.size == 1 && nav.tab != Tab.Mail) { nav.tab = Tab.Mail }
 
-        CompositionLocalProvider(LocalNav provides nav, LocalToasts provides toasts) {
-            val extra = AppTheme.extra
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(extra.bgTop, extra.bgBottom))),
-            ) {
+        CompositionLocalProvider(LocalNav provides nav, LocalToasts provides toasts, app.vestari.ui.components.LocalLook provides settings) {
+            Box(Modifier.fillMaxSize()) {
+                // Единый фон всех разделов: узор и своя картинка из «Внешнего вида».
+                app.vestari.ui.components.AppBackdrop(settings, Modifier.fillMaxSize())
                 SharedTransitionLayout {
                     AnimatedContent(
                         targetState = nav.current,
@@ -218,6 +216,7 @@ fun VestariApp(openMessageKey: String?, onOpenedFromNotification: () -> Unit) {
                                 is Route.ServerFolder -> app.vestari.ui.screens.ServerFolderScreen(route.accountId, route.folder, route.title)
                                 Route.AddAccount -> AddAccountScreen()
                                 Route.Smart -> app.vestari.ui.screens.SmartScreen()
+                                Route.Appearance -> app.vestari.ui.screens.AppearanceScreen()
                             }
                         }
                     }

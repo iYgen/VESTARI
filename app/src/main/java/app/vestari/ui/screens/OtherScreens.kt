@@ -107,8 +107,8 @@ import app.vestari.ui.components.spacing
 @Composable
 private fun ScreenTitle(text: String) {
     val settings by Repository.settings.collectAsState()
-    Text(
-        text, style = titleStyle(settings.titleSize),
+    app.vestari.ui.components.BrandTitle(
+        text, titleStyle(settings.titleSize),
         modifier = Modifier.statusBarsPadding().padding(top = 14.dp, bottom = 10.dp),
     )
 }
@@ -353,54 +353,27 @@ fun ProfileScreen() {
             SoftRow(Icons.Rounded.Add, "Добавить ящик", tint = MaterialTheme.colorScheme.primary) { nav.push(Route.AddAccount) }
         }
 
-        Card {
-            Text("Цветовая гамма", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Palettes.forEachIndexed { i, p ->
-                    val selected = settings.palette == i
-                    val ring by animateDpAsState(if (selected) 3.dp else 0.dp, label = "ring")
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            Modifier
-                                .size(48.dp)
-                                .border(ring, p.accent, CircleShape)
-                                .padding(5.dp)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(p.bgBottom, p.accent)))
-                                .bouncyClick { Repository.updateSettings { it.copy(palette = i) } },
-                            contentAlignment = Alignment.Center,
-                        ) { if (selected) Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
-                        Text(p.name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-                    }
+        // «Внешний вид»: живой пример текущего оформления, все настройки — на отдельном экране.
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = AppTheme.extra.card,
+            modifier = Modifier.fillMaxWidth().bouncyClick { nav.push(Route.Appearance) },
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                app.vestari.ui.components.LookPreview(settings, width = 64.dp)
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Внешний вид", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Логотип, фон, своя картинка, цвета, тема, вид списка и углы карточек",
+                        style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+                    )
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text("Тема", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Segmented(listOf("Как в системе", "Светлая", "Тёмная"), settings.darkMode) { m ->
-                Repository.updateSettings { it.copy(darkMode = m) }
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = AppTheme.extra.muted)
             }
         }
 
         Card {
-            Text("Вид списка писем", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Segmented(ListStyle.entries.map { it.title }, settings.listStyle.ordinal) { i ->
-                Repository.updateSettings { it.copy(listStyle = ListStyle.entries[i]) }
-            }
-            Text(settings.listStyle.hint, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
-                modifier = Modifier.padding(start = 8.dp, top = 6.dp))
-            Spacer(Modifier.height(16.dp))
-            Text("Размер заголовков", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Segmented(listOf("Маленький", "Средний", "Крупный"), settings.titleSize) { s ->
-                Repository.updateSettings { it.copy(titleSize = s) }
-            }
-            Spacer(Modifier.height(8.dp))
-            SwitchRow("Превью текста письма", "Первые строки письма под темой", settings.showPreview) { v ->
-                Repository.updateSettings { it.copy(showPreview = v) }
-            }
             SwitchRow(
                 "Картинки в письмах сразу",
                 if (settings.autoImages) "Картинки загружаются при открытии письма"
@@ -408,8 +381,6 @@ fun ProfileScreen() {
                 settings.autoImages,
             ) { v -> Repository.updateSettings { it.copy(autoImages = v) } }
         }
-
-        ComposeLookCard(settings)
 
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -503,14 +474,14 @@ fun SmartScreen() {
         }
     }
 
-    Surface(Modifier.fillMaxSize(), color = AppTheme.extra.bgTop) {
+    Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.statusBarsPadding().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.pop() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
-                Text("Умные функции", style = titleStyle(settings.titleSize))
+                app.vestari.ui.components.BrandTitle("Умные функции", titleStyle(settings.titleSize))
             }
 
             Card {
@@ -708,7 +679,7 @@ private fun RuleDialog(categories: List<Category>, onDismiss: () -> Unit, onSave
 }
 
 @Composable
-private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onChange(!checked) }.padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -759,14 +730,14 @@ private fun FolderOrder() {
 }
 
 @Composable
-private fun Card(content: @Composable () -> Unit) {
+internal fun Card(content: @Composable () -> Unit) {
     Surface(shape = RoundedCornerShape(24.dp), color = AppTheme.extra.card, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) { content() }
     }
 }
 
 @Composable
-private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+internal fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(AppTheme.extra.accentSoft).padding(4.dp),
     ) {
@@ -780,69 +751,3 @@ private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> U
     }
 }
 
-/** Оформление экрана письма: логотип и фон (готовые рисунки или своя картинка). */
-@Composable
-private fun ComposeLookCard(settings: app.vestari.data.Settings) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val toasts = LocalToasts.current
-    val scope = rememberCoroutineScope()
-    val pickImage = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
-    ) { uri ->
-        if (uri != null) scope.launch {
-            runCatching { Repository.setCustomBackdrop(context, uri) }
-                .onSuccess { toasts.show("Фон установлен") }
-                .onFailure { toasts.show("Не удалось открыть картинку", error = true) }
-        }
-    }
-    Card {
-        Text("Экран письма", style = MaterialTheme.typography.titleMedium)
-        SwitchRow("Логотип Vestari", "Показывать логотип вверху экрана нового письма", settings.showLogo) { v ->
-            Repository.updateSettings { it.copy(showLogo = v) }
-        }
-        Text("Фон", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            app.vestari.ui.components.Backdrops.presets.forEach { (id, title) ->
-                BackdropTile(title, settings.composeBackdrop == id, onClick = { Repository.updateSettings { it.copy(composeBackdrop = id) } }) {
-                    app.vestari.ui.components.Backdrop(id, null, Modifier.fillMaxSize())
-                }
-            }
-            val custom = app.vestari.ui.components.Backdrops.CUSTOM
-            BackdropTile(
-                "Своя картинка", settings.composeBackdrop == custom,
-                onClick = {
-                    if (settings.customBackdrop != null && settings.composeBackdrop != custom) Repository.updateSettings { it.copy(composeBackdrop = custom) }
-                    else runCatching { pickImage.launch("image/*") }
-                },
-            ) {
-                if (settings.customBackdrop != null) app.vestari.ui.components.Backdrop(custom, settings.customBackdrop, Modifier.fillMaxSize())
-                else Box(Modifier.fillMaxSize().background(AppTheme.extra.accentSoft), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-        if (settings.customBackdrop != null) {
-            TextButton(onClick = { runCatching { pickImage.launch("image/*") } }) { Text("Выбрать другую картинку") }
-        }
-    }
-}
-
-@Composable
-private fun BackdropTile(title: String, selected: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .size(width = 64.dp, height = 104.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                .bouncyClick(onClick = onClick),
-        ) {
-            content()
-            if (selected) Box(
-                Modifier.align(Alignment.TopEnd).padding(5.dp).size(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
-        }
-        Text(title, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-    }
-}

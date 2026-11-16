@@ -125,6 +125,11 @@ object Repository {
             read<Map<String, Map<String, String?>>>("folder_map.json")?.let { folderCats.putAll(it) }
             ready = true
         }
+        // Правила раскладки обновились (например, чеки ОФД) — один раз раскладываем уже скачанную почту заново.
+        if (_settings.value.sortVersion < Categorizer.VERSION) {
+            redistributeAsync()
+            updateSettings { it.copy(sortVersion = Categorizer.VERSION) }
+        }
     }
 
     // ---------- папки и раскладка ----------
@@ -620,7 +625,7 @@ object Repository {
         context.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
             ?: throw IllegalStateException("Не удалось открыть картинку")
         folder.listFiles()?.filter { it != target }?.forEach { it.delete() }
-        updateSettings { it.copy(composeBackdrop = "custom", customBackdrop = target.absolutePath) }
+        updateSettings { it.copy(customBackdrop = target.absolutePath, picturePlace = if (it.picturePlace == PicturePlace.Off) PicturePlace.Header else it.picturePlace) }
     }
 
     /** Копирует выбранный файл во внутреннюю папку черновика: так он не пропадёт, даже если исходник удалят. */

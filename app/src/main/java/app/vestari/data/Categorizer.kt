@@ -30,10 +30,19 @@ object Categorizer {
         "uralairlines.ru", "nordwindairlines.ru", "smartavia.com", "azimuth.aero", "yandex-team-travel", "kassir.ru",
         "afisha.ru", "ticketland.ru", "kinopoisk.ru", "redkassa.ru", "travel.yandex.ru", "onetwotrip.com",
     )
+    /** Номер правил раскладки: при изменении приложение один раз заново раскладывает скачанные письма. */
+    const val VERSION = 2
+
+    /**
+     * Операторы фискальных данных (ОФД) и сервисы чеков. Любой адрес, где в домене есть «ofd»
+     * (platformaofd.ru, 1-ofd.ru, ofd.evotor.ru, e-ofd.ru…), тоже считается чеком.
+     */
     private val receiptDomains = listOf(
-        "ofd.ru", "1-ofd.ru", "ofd-ya.ru", "platformaofd.ru", "taxcom.ru", "kontur.ru", "sbis.ru", "ofd.astral.ru",
-        "check.ofd", "lk.platformaofd.ru", "nalog-check",
+        "ofd", "taxcom.ru", "kontur.ru", "sbis.ru", "tensor.ru", "astral.ru", "evotor.ru",
+        "garantexpress.ru", "esphere.ru", "check.ru", "nalog-check", "chek.ru", "cheki.ru", "kassa.yandex",
     )
+    /** «Платформа ОФД», «Первый ОФД», «Такском», «OFD.ru» — по имени отправителя. */
+    private val receiptSenders = Regex("ОФД|\\bOFD\\b|Такском|Taxcom|Контур\\.?\\s?ОФД|Эвотор|Evotor|чек", RegexOption.IGNORE_CASE)
 
     private val receiptWords = Regex("\\bчек\\b|кассов(ый|ого) чек|электронный чек|receipt|оплачен|заказ оплачен|фискальн|ОФД", RegexOption.IGNORE_CASE)
     private val ticketWords = Regex("билет|посадочн|маршрутн(ая|ой) квитанц|бронирован|e-ticket|boarding pass|рейс\\b|электронн(ый|ого) билет", RegexOption.IGNORE_CASE)
@@ -46,9 +55,11 @@ object Categorizer {
         val text = m.subject + " " + m.preview.take(200)
 
         if (from in ownEmails) return SELF
+        // Чеки от ОФД — раньше госписем и билетов: в них часто упоминаются ФНС и рейсы.
+        if (receiptDomains.any { domain.contains(it) } || receiptSenders.containsMatchIn(m.fromName)) return RECEIPTS
         if (govDomains.any { domain == it || domain.endsWith(".$it") } || govWords.containsMatchIn(m.subject)) return GOV
         if (ticketDomains.any { domain == it || domain.endsWith(".$it") } || ticketWords.containsMatchIn(m.subject)) return TICKETS
-        if (receiptDomains.any { domain.contains(it) } || receiptWords.containsMatchIn(m.subject)) return RECEIPTS
+        if (receiptWords.containsMatchIn(m.subject)) return RECEIPTS
         if (salesWords.containsMatchIn(text)) return SALES
         if (m.listUnsubscribe || from.startsWith("news") || from.contains("newsletter") ||
             from.startsWith("noreply") || from.startsWith("no-reply") || from.startsWith("info@")

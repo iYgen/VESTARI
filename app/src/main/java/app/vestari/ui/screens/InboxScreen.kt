@@ -653,7 +653,7 @@ private fun Header(
         }
         Spacer(Modifier.width(10.dp))
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = titleStyle(titleSize), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            app.vestari.ui.components.BrandTitle(title, titleStyle(titleSize), modifier = Modifier.weight(1f, fill = false))
             // Маленький индикатор проверки почты вместо крутилки на весь экран.
             AnimatedVisibility(syncing, enter = fadeIn(), exit = fadeOut()) {
                 CircularProgressIndicator(Modifier.padding(start = 10.dp).size(16.dp), strokeWidth = 2.dp)

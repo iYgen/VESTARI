@@ -121,7 +121,7 @@ fun MessageCard(
         }, label = "cardBg",
     )
     val stripe by animateColorAsState(if (unread) primary else Color.Transparent, label = "stripe")
-    val radius = when (style) { ListStyle.Cards -> 24.dp; ListStyle.Compact -> 18.dp; ListStyle.List -> 14.dp }
+    val radius = when (style) { ListStyle.Cards -> 24.dp; ListStyle.Compact -> 18.dp; ListStyle.List -> 14.dp } * cornerScale(LocalLook.current.cornerStyle)
     val pad = when (style) { ListStyle.Cards -> 16.dp; ListStyle.Compact -> 12.dp; ListStyle.List -> 10.dp }
     val tile = when (style) { ListStyle.Cards -> 52.dp; ListStyle.Compact -> 42.dp; ListStyle.List -> 36.dp }
 

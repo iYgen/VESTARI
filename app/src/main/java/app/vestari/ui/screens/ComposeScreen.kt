@@ -108,7 +108,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.compositeOver
-import app.vestari.ui.components.Backdrop
+import app.vestari.ui.components.BrandTitle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
@@ -378,33 +378,23 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
     }
 
     val extra = AppTheme.extra
+    // Фон и картинка рисуются общим слоем приложения — экран прозрачный.
     Box(Modifier.fillMaxSize()) {
-        Backdrop(settings.composeBackdrop, settings.customBackdrop, Modifier.fillMaxSize())
-
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
             val scroll = rememberScrollState()
             Column(
                 Modifier.weight(1f).verticalScroll(scroll).statusBarsPadding().padding(horizontal = 20.dp),
             ) {
-                // ---------- логотип (отключается в профиле) ----------
-                if (settings.showLogo) {
-                    Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AppLogo(34.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Vestari", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                // ---------- заголовок ----------
-                Row(Modifier.padding(top = if (settings.showLogo) 18.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = ::close, modifier = Modifier.padding(start = 0.dp)) {
+                // ---------- компактная шапка: назад, логотип с заголовком, действия ----------
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = ::close) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp))
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Text(
+                    Spacer(Modifier.width(2.dp))
+                    BrandTitle(
                         if (reply != null) "Ответ" else "Новое письмо",
-                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        titleStyle(settings.titleSize),
+                        modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = ::saveDraftNow) {
                         Icon(Icons.Outlined.Save, "Сохранить черновик", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
@@ -1102,11 +1092,11 @@ fun DraftsScreen() {
     val settings by Repository.settings.collectAsState()
     val fmt = remember { SimpleDateFormat("d MMM, HH:mm", ru) }
 
-    Surface(Modifier.fillMaxSize(), color = AppTheme.extra.card) {
+    Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
             Row(Modifier.statusBarsPadding().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.pop() }) { Icon(Icons.Rounded.Close, "Закрыть") }
-                Text("Черновики", style = titleStyle(settings.titleSize).copy(fontSize = 20.sp))
+                BrandTitle("Черновики", titleStyle(settings.titleSize))
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             if (drafts.isEmpty()) {

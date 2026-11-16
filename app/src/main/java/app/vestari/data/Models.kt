@@ -125,14 +125,41 @@ data class Settings(
     /** Какие папки сворачивать. По умолчанию — как в Mail.ru: рассылки, чеки, скидки, госписьма. */
     val bundled: Set<String> = setOf("newsletters", "receipts", "sales", "gov"),
 
-    // ---- оформление экрана письма ----
-    /** Логотип Vestari вверху экрана письма. */
+    // ---- внешний вид (экран «Внешний вид») ----
+    /** Логотип Vestari в шапке всех разделов. */
     val showLogo: Boolean = true,
-    /** Фон экрана письма: id из [app.vestari.ui.components.Backdrops] или «custom». */
+    /** Рядом со значком — надпись «Vestari». */
+    val logoText: Boolean = false,
+    /** Узор фона всех экранов: id из [app.vestari.ui.components.Backdrops]. */
     val composeBackdrop: String = "wave",
-    /** Путь к своей картинке фона (копия во внутренней папке приложения). */
+    /** Путь к своей картинке (копия во внутренней папке приложения). */
     val customBackdrop: String? = null,
+    /** Где показывать картинку. */
+    val picturePlace: PicturePlace = PicturePlace.Off,
+    /** Как вписывать картинку. */
+    val pictureFit: PictureFit = PictureFit.Crop,
+    /** Какую часть картинки показывать при обрезке: 0 — верх, 1 — центр, 2 — низ. */
+    val pictureAlign: Int = 1,
+    /** Затемнение/осветление картинки, чтобы текст читался: 0…0.9. */
+    val pictureVeil: Float = 0.45f,
+    /** Высота картинки в шапке и в подвале, dp. */
+    val pictureHeight: Int = 180,
+    /** Скругление карточек писем: 0 — острые, 1 — обычные, 2 — сильные. */
+    val cornerStyle: Int = 1,
+
+    /** Версия правил раскладки, по которой разложены письма (см. [Categorizer.VERSION]). */
+    val sortVersion: Int = 0,
 )
+
+/** Где показывать свою картинку. */
+enum class PicturePlace(val title: String) {
+    Off("Нет"), Header("В шапке"), Footer("Внизу"), Both("Шапка и низ"), Full("Весь экран"),
+}
+
+/** Как вписать картинку. */
+enum class PictureFit(val title: String) {
+    Crop("Обрезать"), Width("По ширине"), Fit("Целиком"), Stretch("Растянуть"),
+}
 
 /**
  * Правило раскладки: письма от адреса (`ivan@shop.ru`) или домена (`@shop.ru`) идут в папку.
