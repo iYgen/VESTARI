@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -59,8 +60,8 @@ object Updater {
         val best = listOfNotNull(fromReleases.getOrNull(), fromRepo.getOrNull())
             .maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
         if (best == null) {
-            // Оба источника недоступны — сообщаем об ошибке, а не «у вас последняя версия».
-            if (fromReleases.isFailure && fromRepo.isFailure) throw fromRepo.exceptionOrNull()!!
+            // Ничего не нашли и файл версии недоступен — это ошибка, а не «у вас последняя версия».
+            fromRepo.exceptionOrNull()?.let { throw it }
             return@withContext null
         }
         best.takeIf { compareVersions(it.version, currentVersion) > 0 }
@@ -73,7 +74,7 @@ object Updater {
         conn.setRequestProperty("Cache-Control", "no-cache")
         conn.connectTimeout = 15000; conn.readTimeout = 20000
         try {
-            if (conn.responseCode == 404) return null
+            if (conn.responseCode == 404) throw IllegalStateException(PRIVATE_HINT)
             if (conn.responseCode != 200) throw IllegalStateException("GitHub ответил ${conn.responseCode}")
             val root = json.parseToJsonElement(conn.inputStream.bufferedReader().readText()).jsonObject
             val version = root["version"]?.jsonPrimitive?.content ?: return null
@@ -136,9 +137,15 @@ object Updater {
                 conn.setRequestProperty("User-Agent", "Vestari-Android")
                 conn.connectTimeout = 15000; conn.readTimeout = 30000
                 if (conn.responseCode in 300..399) {
-                    url = URL(conn.getHeaderField("Location")); conn.disconnect(); continue
+                    url = URL(url, conn.getHeaderField("Location")); conn.disconnect(); continue
                 }
                 break
+            }
+            // Без этой проверки страница «404» сохранялась бы вместо APK и установщик выдавал бы ошибку разбора.
+            when (conn.responseCode) {
+                200 -> {}
+                404 -> { conn.disconnect(); throw IllegalStateException(PRIVATE_HINT) }
+                else -> { conn.disconnect(); throw IllegalStateException("GitHub ответил ${conn.responseCode}") }
             }
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: r.size
             conn.inputStream.use { input ->
@@ -153,6 +160,11 @@ object Updater {
                 }
             }
             conn.disconnect()
+            // APK — это zip-архив: первые байты «PK». Иначе скачалось что-то другое.
+            val head = file.inputStream().use { ByteArray(2).also { b -> it.read(b) } }
+            if (head[0] != 'P'.code.toByte() || head[1] != 'K'.code.toByte()) {
+                file.delete(); throw IllegalStateException("вместо APK пришла веб-страница")
+            }
         }.onSuccess { _state.value = State.Ready(r, file) }
             .onFailure { _state.value = State.Failed("Загрузка не удалась: ${it.message}") }
     }
@@ -176,6 +188,17 @@ object Updater {
     }
 
     fun dismiss() { _state.value = State.Idle }
+
+    /** Загрузка в области приложения: не прерывается, если уйти с экрана или закрыть карточку. */
+    private val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    fun startDownload(context: Context, r: Release) {
+        if (_state.value is State.Downloading) return
+        appScope.launch { download(context.applicationContext, r) }
+    }
+
+    private const val PRIVATE_HINT =
+        "файл обновления недоступен — репозиторий на GitHub закрыт или файл удалён"
 
     /** "1.10.0" > "1.9.3". Нечисловые хвосты вроде "-beta" игнорируются. */
     fun compareVersions(a: String, b: String): Int {

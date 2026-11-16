@@ -43,7 +43,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun UpdateBanner(modifier: Modifier = Modifier) {
     val state by Updater.state.collectAsState()
-    val visible = state is Updater.State.Available || state is Updater.State.Downloading || state is Updater.State.Ready
+    val visible = state is Updater.State.Available || state is Updater.State.Downloading || state is Updater.State.Ready ||
+        (state as? Updater.State.Failed)?.message?.startsWith("Загрузка") == true
     AnimatedVisibility(
         visible, modifier = modifier,
         enter = slideInVertically(spring(dampingRatio = 0.8f)) { it } + fadeIn(),
@@ -110,7 +111,7 @@ private fun UpdateContent(state: Updater.State, compact: Boolean) {
         Spacer(Modifier.height(12.dp))
         when (state) {
             is Updater.State.Available -> Button(
-                onClick = { scope.launch { Updater.download(context.applicationContext, state.release) } },
+                onClick = { Updater.startDownload(context, state.release) },
                 shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
             ) { Text("Скачать обновление") }
             is Updater.State.Ready -> Button(
@@ -118,7 +119,7 @@ private fun UpdateContent(state: Updater.State, compact: Boolean) {
                 shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
             ) { Text("Установить") }
             is Updater.State.Downloading -> {}
-            else -> if (!compact && Updater.configured) {
+            else -> if (!compact && Updater.configured || state is Updater.State.Failed) {
                 TextButton(onClick = { scope.launch { Updater.check() } }) { Text("Проверить обновления") }
             }
         }
