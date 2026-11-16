@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.vestari.data.Account
 import app.vestari.data.Category
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import app.vestari.data.categoryTree
 import app.vestari.data.childrenOf
@@ -132,6 +133,8 @@ fun FoldersScreen() {
     var actionsFor by remember { mutableStateOf<Category?>(null) }
     var creating by remember { mutableStateOf(false) }
     val collapsed = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    /** Родитель для «Создать подпапку». */
+    var creatingIn by remember { mutableStateOf<String?>(null) }
 
     val all = remember(messagesMap) { messagesMap.values.flatten() }
     val stats = remember(all, assignments) {
@@ -180,7 +183,8 @@ fun FoldersScreen() {
             title = { Text(c.name) },
             text = {
                 Column {
-                    SoftRow(Icons.Outlined.DriveFileRenameOutline, "Переименовать") { editing = c; actionsFor = null }
+                    SoftRow(Icons.Rounded.Add, "Создать подпапку", tint = MaterialTheme.colorScheme.primary) { creatingIn = c.id; creating = true; actionsFor = null }
+                    SoftRow(Icons.Outlined.DriveFileRenameOutline, "Переименовать или переместить") { editing = c; actionsFor = null }
                     SoftRow(Icons.Outlined.Delete, "Удалить папку", tint = AppTheme.extra.unreadDot) {
                         actionsFor = null
                         val removed = Repository.removeCategory(c.id)
@@ -194,14 +198,18 @@ fun FoldersScreen() {
         )
     }
     editing?.let { c ->
-        FolderDialog("Папка", c.name, c.icon, onDismiss = { editing = null }) { name, icon ->
-            Repository.updateCategory(c.copy(name = name.trim(), icon = icon)); editing = null
+        FolderDialog("Папка", c.name, c.icon, initialParent = c.parent, editingId = c.id, onDismiss = { editing = null }) { name, icon, parent ->
+            Repository.updateCategory(c.copy(name = name.trim(), icon = icon, parent = parent)); editing = null
         }
     }
     if (creating) {
-        FolderDialog("Новая папка", onDismiss = { creating = false }) { name, icon ->
-            creating = false
-            val c = Repository.addCategory(name, icon)
+        FolderDialog(
+            if (creatingIn != null) "Новая подпапка" else "Новая папка",
+            initialParent = creatingIn,
+            onDismiss = { creating = false; creatingIn = null },
+        ) { name, icon, parent ->
+            creating = false; creatingIn = null
+            val c = Repository.addCategory(name, icon, parent)
             toasts.show("Папка создана", "Отменить", onAction = { Repository.removeCategory(c.id) })
         }
     }
@@ -736,16 +744,20 @@ private fun FolderOrder() {
     }
     AnimatedVisibility(expanded) {
         Column(Modifier.padding(top = 8.dp)) {
-            categories.forEachIndexed { i, c ->
+            // Деревом: стрелки двигают папку среди папок её уровня, подпапки едут вместе с ней.
+            categoryTree(categories).forEach { node ->
+                val c = node.category
+                val siblings = categories.filter { categories.isTopLevel(it) == categories.isTopLevel(c) && (categories.isTopLevel(c) || it.parent == c.parent) }
+                val i = siblings.indexOfFirst { it.id == c.id }
                 key(c.id) {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CategoryTile(c.id, iconFor(c.icon), c.name, 34.dp)
+                    Row(Modifier.fillMaxWidth().padding(start = (node.depth * 20).dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CategoryTile(c.id, iconFor(c.icon), c.name, if (node.depth > 0) 28.dp else 34.dp)
                         Spacer(Modifier.width(12.dp))
-                        Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { Repository.moveCategory(i, i - 1) }, enabled = i > 0) {
+                        Text(c.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { Repository.moveAmongSiblings(c.id, -1) }, enabled = i > 0) {
                             Icon(Icons.Rounded.KeyboardArrowUp, "Выше")
                         }
-                        IconButton(onClick = { Repository.moveCategory(i, i + 1) }, enabled = i < categories.lastIndex) {
+                        IconButton(onClick = { Repository.moveAmongSiblings(c.id, 1) }, enabled = i < siblings.lastIndex) {
                             Icon(Icons.Rounded.KeyboardArrowDown, "Ниже")
                         }
                     }

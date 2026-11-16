@@ -628,9 +628,14 @@ fun InboxScreen() {
     if (nav.folderPanelOpen) FolderPanel { nav.folderPanelOpen = false }
     moveTarget?.let { MoveToFolderSheet(it) { moveTarget = null } }
     if (creatingFolder) {
-        FolderDialog("Новая папка", onDismiss = { creatingFolder = false }) { name, icon ->
+        // Создаём из открытой папки — по умолчанию новая папка станет её подпапкой.
+        FolderDialog(
+            "Новая папка",
+            initialParent = nav.folder?.takeIf { id -> categories.any { it.id == id } },
+            onDismiss = { creatingFolder = false },
+        ) { name, icon, parent ->
             creatingFolder = false
-            val c = Repository.addCategory(name, icon)
+            val c = Repository.addCategory(name, icon, parent)
             toasts.show("Папка создана", "Отменить", onAction = { Repository.removeCategory(c.id) })
         }
     }

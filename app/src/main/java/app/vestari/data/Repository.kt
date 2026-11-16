@@ -219,15 +219,39 @@ object Repository {
         persist("assignments.json", _assignments.value)
     }
 
-    fun addCategory(name: String, icon: String): Category {
-        val c = Category("c_" + UUID.randomUUID().toString().take(8), name.trim(), icon)
-        _categories.update { it + c }
+    /** Новая папка; с [parent] — подпапка внутри неё (сразу после последней подпапки родителя). */
+    fun addCategory(name: String, icon: String, parent: String? = null): Category {
+        val c = Category("c_" + UUID.randomUUID().toString().take(8), name.trim(), icon, parent = parent)
+        _categories.update { list ->
+            val after = if (parent == null) -1 else list.indexOfLast { it.id in list.subtreeIds(parent) }
+            if (after < 0) list + c else list.toMutableList().apply { add(after + 1, c) }
+        }
         persist("categories.json", _categories.value)
         return c
     }
 
+    /** Обновить папку. Вложить папку в её же подпапку нельзя — такой родитель игнорируется. */
     fun updateCategory(c: Category) {
-        _categories.update { list -> list.map { if (it.id == c.id) c else it } }
+        _categories.update { list ->
+            val safe = if (c.parent != null && c.parent in list.subtreeIds(c.id)) c.copy(parent = list.firstOrNull { it.id == c.id }?.parent) else c
+            list.map { if (it.id == safe.id) safe else it }
+        }
+        persist("categories.json", _categories.value)
+    }
+
+    /** Сдвинуть папку выше (-1) или ниже (+1) среди папок того же уровня — подпапки едут вместе с ней. */
+    fun moveAmongSiblings(id: String, delta: Int) {
+        _categories.update { list ->
+            val me = list.firstOrNull { it.id == id } ?: return@update list
+            val ids = list.map { it.id }.toSet()
+            val parentOf = { c: Category -> c.parent?.takeIf { it in ids } }
+            val siblings = list.filter { parentOf(it) == parentOf(me) }
+            val i = siblings.indexOfFirst { it.id == id }
+            val other = siblings.getOrNull(i + delta) ?: return@update list
+            val a = list.indexOfFirst { it.id == id }
+            val b = list.indexOfFirst { it.id == other.id }
+            list.toMutableList().apply { this[a] = other; this[b] = me }
+        }
         persist("categories.json", _categories.value)
     }
 

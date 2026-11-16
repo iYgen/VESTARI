@@ -8,6 +8,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -142,9 +148,9 @@ fun AccountSheet(onDismiss: () -> Unit) {
     }
 
     if (creating) {
-        FolderDialog(title = "Новая папка", onDismiss = { creating = false }) { name, icon ->
+        FolderDialog(title = "Новая папка", onDismiss = { creating = false }) { name, icon, parent ->
             creating = false
-            val c = Repository.addCategory(name, icon)
+            val c = Repository.addCategory(name, icon, parent)
             toasts.show("Папка создана", "Отменить", onAction = { Repository.removeCategory(c.id) })
         }
     }
@@ -193,7 +199,7 @@ fun RadioCheck(selected: Boolean) {
     }
 }
 
-/** Список папок с перетаскиванием за «≡». */
+/** Папки деревом (подпапки с отступом); «≡» тянет папку среди папок её уровня вместе с подпапками. */
 @Composable
 private fun ReorderableFolders(categories: List<Category>, onOpen: (Category) -> Unit) {
     val haptics = LocalHapticFeedback.current
@@ -203,7 +209,9 @@ private fun ReorderableFolders(categories: List<Category>, onOpen: (Category) ->
     var offset by remember { mutableFloatStateOf(0f) }
 
     Column {
-        categories.forEach { c ->
+        val collapsed = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+        categoryTree(categories, collapsed.toSet()).forEach { node ->
+            val c = node.category
             key(c.id) {
                 val dragging = draggingId == c.id
                 val elevation by animateDpAsState(if (dragging) 10.dp else 0.dp, label = "lift")
@@ -221,12 +229,17 @@ private fun ReorderableFolders(categories: List<Category>, onOpen: (Category) ->
                         .fillMaxWidth()
                         .height(rowHeight)
                         .clickable { onOpen(c) }
-                        .padding(horizontal = 12.dp),
+                        .padding(start = 12.dp + (node.depth * 22).dp, end = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    Icon(iconFor(c.icon), null, modifier = Modifier.size(26.dp))
-                    Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Icon(iconFor(c.icon), null, modifier = Modifier.size(if (node.depth > 0) 22.dp else 26.dp))
+                    Text(c.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (node.hasChildren) Icon(
+                        if (c.id in collapsed) Icons.AutoMirrored.Rounded.KeyboardArrowRight else Icons.Rounded.KeyboardArrowDown,
+                        if (c.id in collapsed) "Показать подпапки" else "Свернуть подпапки", tint = AppTheme.extra.muted,
+                        modifier = Modifier.size(32.dp).clip(CircleShape).clickable { if (!collapsed.remove(c.id)) collapsed.add(c.id) }.padding(4.dp),
+                    )
                     Icon(
                         Icons.Rounded.DragHandle, "Перетащить", tint = AppTheme.extra.muted,
                         modifier = Modifier
@@ -243,13 +256,13 @@ private fun ReorderableFolders(categories: List<Category>, onOpen: (Category) ->
                                 ) { change, amount ->
                                     change.consume()
                                     offset += amount.y
-                                    val list = Repository.categories.value
-                                    val i = list.indexOfFirst { it.id == c.id }
-                                    if (offset > rowPx / 2 && i < list.lastIndex) {
-                                        Repository.moveCategory(i, i + 1); offset -= rowPx
+                                    // Двигаем среди папок того же уровня — подпапки едут вместе с родителем.
+
+                                    if (offset > rowPx / 2) {
+                                        Repository.moveAmongSiblings(c.id, 1); offset -= rowPx
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    } else if (offset < -rowPx / 2 && i > 0) {
-                                        Repository.moveCategory(i, i - 1); offset += rowPx
+                                    } else if (offset < -rowPx / 2) {
+                                        Repository.moveAmongSiblings(c.id, -1); offset += rowPx
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
                                 }
@@ -317,25 +330,32 @@ fun MoveToFolderSheet(message: MailMessage, onDismiss: () -> Unit) {
         }
     }
     if (creating) {
-        FolderDialog("Новая папка", onDismiss = { creating = false }) { name, icon ->
+        FolderDialog("Новая папка", onDismiss = { creating = false }) { name, icon, parent ->
             creating = false
-            val c = Repository.addCategory(name, icon)
+            val c = Repository.addCategory(name, icon, parent)
             pick(c.id, c.name)
         }
     }
 }
 
-/** Диалог создания/переименования папки с выбором иконки. */
+/**
+ * Диалог создания/изменения папки: название, «Внутри папки» (вложенность, как в Mail.ru) и иконка.
+ * [editingId] — изменяемая папка: её саму и её подпапки нельзя выбрать родителем.
+ */
 @Composable
 fun FolderDialog(
     title: String,
     initialName: String = "",
     initialIcon: String = "folder",
+    initialParent: String? = null,
+    editingId: String? = null,
     onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit,
+    onConfirm: (name: String, icon: String, parent: String?) -> Unit,
 ) {
     var name by remember { mutableStateOf(initialName) }
     var icon by remember { mutableStateOf(initialIcon) }
+    var parent by remember { mutableStateOf(initialParent) }
+    val categories by Repository.categories.collectAsState()
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AppTheme.extra.card,
@@ -348,6 +368,44 @@ fun FolderDialog(
                     label = { Text("Название") }, shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(12.dp))
+                // Родительская папка: «Верхний уровень» или любая папка дерева (кроме самой себя и своих подпапок).
+                val blocked = remember(categories, editingId) { editingId?.let { categories.subtreeIds(it) }.orEmpty() }
+                var parentMenu by remember { mutableStateOf(false) }
+                Text("Внутри папки", style = MaterialTheme.typography.labelLarge, color = AppTheme.extra.muted)
+                Box {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp).clip(RoundedCornerShape(14.dp))
+                            .background(AppTheme.extra.accentSoft).clickable { parentMenu = true }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val p = categories.firstOrNull { it.id == parent }
+                        Icon(if (p != null) iconFor(p.icon) else Icons.Outlined.AllInbox, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            categories.pathTo(parent).joinToString(" › ") { it.name }.ifEmpty { "Верхний уровень" },
+                            style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(Icons.Rounded.KeyboardArrowDown, "Выбрать папку")
+                    }
+                    DropdownMenu(parentMenu, onDismissRequest = { parentMenu = false }, containerColor = AppTheme.extra.card) {
+                        DropdownMenuItem(
+                            text = { Text("Верхний уровень") },
+                            leadingIcon = { Icon(Icons.Outlined.AllInbox, null) },
+                            onClick = { parent = null; parentMenu = false },
+                        )
+                        categoryTree(categories).filter { it.category.id !in blocked }.forEach { node ->
+                            DropdownMenuItem(
+                                text = { Text(node.category.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingIcon = { Icon(iconFor(node.category.icon), null, modifier = Modifier.padding(start = (node.depth * 16).dp)) },
+                                trailingIcon = { if (node.category.id == parent) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = { parent = node.category.id; parentMenu = false },
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FolderIcons.forEach { (k, v) ->
@@ -364,7 +422,7 @@ fun FolderDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name, icon) }, enabled = name.isNotBlank()) { Text("Готово") }
+            TextButton(onClick = { onConfirm(name, icon, parent) }, enabled = name.isNotBlank()) { Text("Готово") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )

@@ -389,8 +389,6 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                 title = if (reply != null) "Ответ" else "Новое письмо",
                 sending = sending,
                 onBack = ::close,
-                onAttach = ::attach,
-                onSchedule = ::schedule,
                 onSend = { send() },
                 menu = {
                     MoreMenu(
@@ -528,6 +526,8 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
             AssistStrip(
                 proposal = proposal,
                 hasSelection = !body.selection.collapsed,
+                onAttach = ::attach,
+                onSchedule = ::schedule,
                 onAssist = { which ->
                     when (which) {
                         0 -> runAssist("Короче", TextAssist::shorten)
@@ -561,20 +561,17 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
 // ============================ части экрана ============================
 
 /**
- * Верхняя панель редактора: «назад», маленький логотип с заголовком и все действия письма —
- * файл, позже, отправить и меню. Если места мало, сокращается заголовок, а не иконки.
+ * Верхняя панель редактора: «назад», маленький логотип с заголовком, «отправить» и меню.
+ * Скрепка и «позже» — внизу справа, у текста письма. Если места мало, сокращается заголовок.
  */
 @Composable
 private fun ComposeTopBar(
     title: String,
     sending: Boolean,
     onBack: () -> Unit,
-    onAttach: () -> Unit,
-    onSchedule: (Long, String) -> Unit,
     onSend: () -> Unit,
     menu: @Composable () -> Unit,
 ) {
-    var scheduleMenu by remember { mutableStateOf(false) }
     val primary = MaterialTheme.colorScheme.primary
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(start = 4.dp, end = 2.dp),
@@ -587,27 +584,7 @@ private fun ComposeTopBar(
             modifier = Modifier.weight(1f),
             minLogo = 26f,
         )
-        IconButton(onClick = onAttach, modifier = Modifier.size(42.dp)) {
-            Icon(Icons.Outlined.AttachFile, "Прикрепить файл", modifier = Modifier.size(22.dp))
-        }
-        Box {
-            IconButton(onClick = { scheduleMenu = true }, modifier = Modifier.size(42.dp)) {
-                Icon(Icons.Outlined.Schedule, "Отправить позже", modifier = Modifier.size(22.dp))
-            }
-            DropdownMenu(scheduleMenu, onDismissRequest = { scheduleMenu = false }, containerColor = AppTheme.extra.card) {
-                Text(
-                    "Отправить позже", style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
-                scheduleOptions().forEach { (t, at) ->
-                    DropdownMenuItem(
-                        text = { Text(t, style = MaterialTheme.typography.bodyMedium) },
-                        onClick = { scheduleMenu = false; onSchedule(at, scheduleLabel(at)) },
-                    )
-                }
-            }
-        }
-        IconButton(onClick = onSend, enabled = !sending, modifier = Modifier.size(42.dp)) {
+        IconButton(onClick = onSend, enabled = !sending, modifier = Modifier.size(44.dp)) {
             if (sending) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             else Icon(Icons.AutoMirrored.Outlined.Send, "Отправить", tint = primary, modifier = Modifier.size(24.dp))
         }
@@ -714,9 +691,27 @@ private fun RecipientRow(
             list.forEach { email ->
                 RecipientChip(email, names[email.lowercase()].orEmpty(), onRemove = { onRemove(email) })
             }
+            // В начале поля стоит невидимый символ: экранная клавиатура не сообщает о «стереть» в пустом поле,
+            // а так стирание этого символа означает «удалить последний адрес».
+            var field by remember { mutableStateOf(TextFieldValue(ZW + input, TextRange(input.length + 1))) }
+            LaunchedEffect(input) {
+                if (field.text.removePrefix(ZW) != input) field = TextFieldValue(ZW + input, TextRange(input.length + 1))
+            }
             BasicTextField(
-                value = input,
-                onValueChange = onInput,
+                value = field,
+                onValueChange = { v ->
+                    if (!v.text.startsWith(ZW)) {
+                        if (list.isNotEmpty()) onRemove(list.last())
+                        val rest = v.text.replace(ZW, "")
+                        field = TextFieldValue(ZW + rest, TextRange(1))
+                        if (rest != input) onInput(rest)
+                    } else {
+                        val s = v.selection
+                        field = v.copy(selection = TextRange(maxOf(1, s.start), maxOf(1, s.end)))
+                        val text = v.text.drop(1)
+                        if (text != input) onInput(text)
+                    }
+                },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -741,6 +736,9 @@ private fun RecipientRow(
     }
 }
 
+/** Невидимый символ в начале поля адреса — ловит «стереть» в пустом поле. */
+private const val ZW = "​"
+
 /** Адресат небольшим чипом: имя (или адрес) и крестик; неверный адрес подсвечен красным. */
 @Composable
 private fun RecipientChip(email: String, name: String, onRemove: () -> Unit) {
@@ -750,7 +748,7 @@ private fun RecipientChip(email: String, name: String, onRemove: () -> Unit) {
             .height(32.dp)
             .clip(RoundedCornerShape(50))
             .background(if (valid) AppTheme.extra.accentSoft else AppTheme.extra.unreadDot.copy(alpha = 0.15f))
-            .padding(start = 12.dp, end = 4.dp),
+            .padding(start = 12.dp, end = 0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -759,10 +757,16 @@ private fun RecipientChip(email: String, name: String, onRemove: () -> Unit) {
             color = if (valid) MaterialTheme.colorScheme.onSurface else AppTheme.extra.unreadDot,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 200.dp),
         )
+        // Крестик с крупной областью нажатия — удобно попасть пальцем.
         Box(
-            Modifier.padding(start = 2.dp).size(26.dp).clip(CircleShape).clickable(onClick = onRemove),
+            Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onRemove),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Close, "Убрать $email", tint = AppTheme.extra.muted, modifier = Modifier.size(16.dp)) }
+        ) {
+            Box(
+                Modifier.size(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Close, "Убрать $email", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(14.dp)) }
+        }
     }
 }
 
@@ -860,13 +864,15 @@ private fun SubjectField(subject: String, onChange: (String) -> Unit, onFocus: (
 private fun AssistStrip(
     proposal: AssistProposal?,
     hasSelection: Boolean,
+    onAttach: () -> Unit,
+    onSchedule: (Long, String) -> Unit,
     onAssist: (Int) -> Unit,
     onCancel: () -> Unit,
     onAccept: (AssistProposal) -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val extra = AppTheme.extra
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp)) {
         AnimatedVisibility(proposal != null, enter = expandVertically(tween(200)) + fadeIn(), exit = shrinkVertically(tween(160)) + fadeOut()) {
             proposal?.let { p ->
                 Surface(
@@ -892,14 +898,10 @@ private fun AssistStrip(
             }
         }
         ThinDivider()
-        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.AutoAwesome, null, tint = primary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (hasSelection) "К выделенному" else "Помочь с письмом",
-                style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false,
-            )
-            Box(Modifier.padding(horizontal = 8.dp).width(1.dp).height(16.dp).background(MaterialTheme.colorScheme.outlineVariant))
+        // Слева — помощь с текстом (листается вбок), справа — скрепка и «отправить позже».
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.AutoAwesome, if (hasSelection) "Помочь с выделенным" else "Помочь с письмом", tint = primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
             Row(
                 Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
@@ -917,6 +919,55 @@ private fun AssistStrip(
                 AssistDot()
                 AssistLink("Исправить") { onAssist(3) }
             }
+            Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            IconButton(onClick = onAttach, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Outlined.AttachFile, "Прикрепить файл", tint = primary, modifier = Modifier.size(22.dp))
+            }
+            ScheduleButton(onSchedule)
+        }
+    }
+}
+
+/** «Отправить позже»: быстрые варианты и «Выбрать дату и время…» — свой день и час через системные окна. */
+@Composable
+private fun ScheduleButton(onSchedule: (Long, String) -> Unit) {
+    val context = LocalContext.current
+    val toasts = LocalToasts.current
+    var menu by remember { mutableStateOf(false) }
+    fun pickCustom() {
+        val now = Calendar.getInstance()
+        android.app.DatePickerDialog(context, { _, y, m, d ->
+            val defaultHour = if (now.get(Calendar.HOUR_OF_DAY) < 22) now.get(Calendar.HOUR_OF_DAY) + 1 else 9
+            android.app.TimePickerDialog(context, { _, h, min ->
+                val at = Calendar.getInstance().apply { set(y, m, d, h, min, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
+                if (at <= System.currentTimeMillis() + 60_000) toasts.show("Выберите время в будущем", error = true)
+                else onSchedule(at, scheduleLabel(at))
+            }, defaultHour, 0, true).show()
+        }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).apply {
+            datePicker.minDate = now.timeInMillis - 1000
+        }.show()
+    }
+    Box {
+        IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) {
+            Icon(Icons.Outlined.Schedule, "Отправить позже", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        }
+        DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = AppTheme.extra.card) {
+            Text(
+                "Отправить позже", style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+            scheduleOptions().forEach { (t, at) ->
+                DropdownMenuItem(
+                    text = { Text(t, style = MaterialTheme.typography.bodyMedium) },
+                    onClick = { menu = false; onSchedule(at, scheduleLabel(at)) },
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.Schedule, null, tint = MaterialTheme.colorScheme.primary) },
+                text = { Text("Выбрать дату и время…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) },
+                onClick = { menu = false; pickCustom() },
+            )
         }
     }
 }
