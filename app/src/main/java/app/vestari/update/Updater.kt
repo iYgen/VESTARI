@@ -46,23 +46,63 @@ object Updater {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Запрос к GitHub. Возвращает релиз, только если он новее установленной версии. */
+    /**
+     * Ищет новую версию в двух местах и берёт самую свежую:
+     * 1) GitHub Releases (если релизы публикуются через GitHub Actions);
+     * 2) файл version.json в корне репозитория рядом с Vestari.apk — работает без релизов и секретов.
+     * Возвращает обновление, только если оно новее установленной версии.
+     */
     suspend fun fetchNewer(): Release? = withContext(Dispatchers.IO) {
         if (!configured) return@withContext null
+        val fromReleases = runCatching { fetchFromReleases() }
+        val fromRepo = runCatching { fetchFromRepo() }
+        val best = listOfNotNull(fromReleases.getOrNull(), fromRepo.getOrNull())
+            .maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
+        if (best == null) {
+            // Оба источника недоступны — сообщаем об ошибке, а не «у вас последняя версия».
+            if (fromReleases.isFailure && fromRepo.isFailure) throw fromRepo.exceptionOrNull()!!
+            return@withContext null
+        }
+        best.takeIf { compareVersions(it.version, currentVersion) > 0 }
+    }
+
+    private fun fetchFromRepo(): Release? {
+        val conn = URL("https://raw.githubusercontent.com/$repo/main/version.json?t=${System.currentTimeMillis()}")
+            .openConnection() as HttpURLConnection
+        conn.setRequestProperty("User-Agent", "Vestari-Android")
+        conn.setRequestProperty("Cache-Control", "no-cache")
+        conn.connectTimeout = 15000; conn.readTimeout = 20000
+        try {
+            if (conn.responseCode == 404) return null
+            if (conn.responseCode != 200) throw IllegalStateException("GitHub ответил ${conn.responseCode}")
+            val root = json.parseToJsonElement(conn.inputStream.bufferedReader().readText()).jsonObject
+            val version = root["version"]?.jsonPrimitive?.content ?: return null
+            val apk = root["apk"]?.jsonPrimitive?.content ?: "Vestari.apk"
+            return Release(
+                version = version,
+                notes = root["notes"]?.jsonPrimitive?.content.orEmpty().trim(),
+                apkUrl = if (apk.startsWith("http")) apk else "https://github.com/$repo/raw/main/$apk",
+                size = root["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+            )
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun fetchFromReleases(): Release? {
         val conn = URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection
         conn.setRequestProperty("Accept", "application/vnd.github+json")
         conn.setRequestProperty("User-Agent", "Vestari-Android")
         conn.connectTimeout = 15000; conn.readTimeout = 20000
         try {
-            if (conn.responseCode == 404) return@withContext null // релизов ещё нет
+            if (conn.responseCode == 404) return null // релизов ещё нет
             if (conn.responseCode != 200) throw IllegalStateException("GitHub ответил ${conn.responseCode}")
             val root = json.parseToJsonElement(conn.inputStream.bufferedReader().readText()).jsonObject
-            val version = root["tag_name"]?.jsonPrimitive?.content?.removePrefix("v") ?: return@withContext null
+            val version = root["tag_name"]?.jsonPrimitive?.content?.removePrefix("v") ?: return null
             val asset = root["assets"]?.jsonArray?.map { it.jsonObject }
                 ?.firstOrNull { it["name"]?.jsonPrimitive?.content?.endsWith(".apk") == true }
-                ?: return@withContext null
-            if (compareVersions(version, currentVersion) <= 0) return@withContext null
-            Release(
+                ?: return null
+            return Release(
                 version = version,
                 notes = root["body"]?.jsonPrimitive?.content.orEmpty().trim(),
                 apkUrl = asset["browser_download_url"]!!.jsonPrimitive.content,
