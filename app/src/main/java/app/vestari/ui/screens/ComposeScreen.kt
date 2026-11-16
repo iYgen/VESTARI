@@ -513,29 +513,6 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                     )
                 }
 
-                // ---------- помощь с письмом ----------
-                AssistCard(
-                    proposal = proposal,
-                    hasSelection = !body.selection.collapsed,
-                    onAssist = { which ->
-                        when (which) {
-                            0 -> runAssist("Сделать короче", TextAssist::shorten)
-                            1 -> runAssist("Тон: официальнее") { TextAssist.changeTone(it, TextAssist.Tone.Formal) }
-                            2 -> runAssist("Тон: дружелюбнее") { TextAssist.changeTone(it, TextAssist.Tone.Friendly) }
-                            3 -> runAssist("Исправить ошибки", TextAssist::fixErrors)
-                        }
-                    },
-                    onCancel = { proposal = null },
-                    onAccept = { p ->
-                        val before = body
-                        val newText = body.text.replaceRange(p.range.min, p.range.max, p.result.text)
-                        body = TextFieldValue(newText, TextRange(p.range.min + p.result.text.length))
-                        dirty = true
-                        proposal = null
-                        toasts.show("Изменения применены", "Отменить") { body = before }
-                    },
-                )
-
                 // ---------- подсказка про тему ----------
                 AnimatedVisibility(subject.isBlank(), enter = fadeIn(), exit = fadeOut() + shrinkVertically()) {
                     Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
