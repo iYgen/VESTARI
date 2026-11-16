@@ -21,6 +21,7 @@ import androidx.work.WorkerParameters
 import app.vestari.MainActivity
 import app.vestari.R
 import app.vestari.data.MailMessage
+import app.vestari.data.Smart
 import app.vestari.data.Repository
 import java.util.concurrent.TimeUnit
 
@@ -30,7 +31,9 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         Repository.init(applicationContext)
         if (Repository.accounts.value.isEmpty()) return Result.success()
         val fresh = runCatching { Repository.sync() }.getOrElse { return Result.retry() }
-        if (Repository.settings.value.notifications) Notifier.notify(applicationContext, fresh)
+        // «Тихие» рассылки и скидки не беспокоят уведомлениями.
+        val important = fresh.filterNot { Repository.isQuiet(Repository.categoryOf(it)) }
+        if (Repository.settings.value.notifications) Notifier.notify(applicationContext, important)
         return Result.success()
     }
 
@@ -68,9 +71,10 @@ object Notifier {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+            val code = if (Repository.settings.value.otpCodes) Smart.otp(m) else null
             val n = NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(m.senderTitle)
+                .setContentTitle(if (code != null) "Код $code · ${m.senderTitle}" else m.senderTitle)
                 .setContentText(m.subject)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(m.subject + "\n" + m.preview))
                 .setContentIntent(open)

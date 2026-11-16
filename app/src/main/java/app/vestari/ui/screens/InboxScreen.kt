@@ -103,8 +103,13 @@ import androidx.compose.ui.unit.Dp
 import app.vestari.R
 import app.vestari.data.ListStyle
 import app.vestari.data.SyncProgress
+import app.vestari.data.Categorizer
+import app.vestari.data.Smart
 import app.vestari.ui.components.spacing
 import java.util.Locale
+
+/** Разделитель в списке писем («Сегодня», «Вчера»…). */
+private data class DateHeader(val title: String)
 
 /** Особый фильтр «Важные» — письма, отмеченные флажком (звёздочкой) в любой почте, в том числе в Mail.ru. */
 const val FLAGGED = "@flagged"
@@ -211,15 +216,32 @@ fun InboxScreen() {
         else messagesMap[selectedId].orEmpty()
     }
     val catById = categories.associateBy { it.id }
-    val visible = remember(all, nav.folder, assignments) {
+    val visible = remember(all, nav.folder, assignments, settings.cleanInbox) {
         when (nav.folder) {
-            null -> all
+            null -> if (!settings.cleanInbox) all else all.filter {
+                val c = categoryOf(it, assignments)
+                c != Categorizer.NEWSLETTERS && c != Categorizer.SALES
+            }
             FLAGGED -> all.filter { it.flagged }
             else -> all.filter { categoryOf(it, assignments) == nav.folder }
         }
     }
-    val unreadByCat = remember(all, assignments) {
+    val unreadByCat = remember(all, assignments, settings.quietPromos) {
         all.filter { !it.seen }.groupingBy { categoryOf(it, assignments) }.eachCount()
+            .filterKeys { !Repository.isQuiet(it) }
+    }
+    // Строки списка: письма и (если включено) разделители «Сегодня», «Вчера»…
+    val rows: List<Any> = remember(visible, settings.groupByDate) {
+        if (!settings.groupByDate) visible
+        else buildList {
+            var last: String? = null
+            val now = System.currentTimeMillis()
+            visible.forEach { m ->
+                val b = Smart.dateBucket(m.date, now)
+                if (b != last) { add(DateHeader(b)); last = b }
+                add(m)
+            }
+        }
     }
     val flaggedCount = remember(all) { all.count { it.flagged } }
     // Прогресс загрузки: по выбранному ящику или суммарно по всем.
@@ -316,11 +338,24 @@ fun InboxScreen() {
                     }
                 }
 
-                items(visible, key = { it.key }) { m ->
+                items(
+                    rows,
+                    key = { r -> if (r is MailMessage) r.key else "h_" + (r as DateHeader).title },
+                    contentType = { r -> if (r is MailMessage) 0 else 1 },
+                ) { r ->
+                    if (r is DateHeader) {
+                        Text(
+                            r.title, style = MaterialTheme.typography.labelLarge, color = AppTheme.extra.muted,
+                            modifier = Modifier.animateItem().padding(start = 8.dp, top = 10.dp, bottom = 2.dp),
+                        )
+                        return@items
+                    }
+                    val m = r as MailMessage
                     SwipeableMessage(
                         m = m,
                         style = style,
                         showPreview = settings.showPreview,
+                        otp = if (settings.otpCodes && Smart.isFresh(m)) Smart.otp(m) else null,
                         category = categoryOf(m, assignments)?.let { catById[it] },
                         showAccount = if (selectedId == null && accounts.size > 1) accounts.firstOrNull { it.id == m.accountId }?.email else null,
                         modifier = Modifier.animateItem(),
@@ -418,6 +453,7 @@ private fun SwipeableMessage(
     m: MailMessage,
     style: ListStyle,
     showPreview: Boolean,
+    otp: String?,
     category: Category?,
     showAccount: String?,
     modifier: Modifier,
@@ -471,6 +507,7 @@ private fun SwipeableMessage(
             showAccount = showAccount,
             style = style,
             showPreview = showPreview,
+            otp = otp,
             modifier = Modifier.sharedCard(m.key),
             onClick = onOpen,
             onLongClick = onMove,

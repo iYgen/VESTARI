@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -65,6 +66,13 @@ object Repository {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    /** Правила раскладки по отправителю (созданные вручную или выученные на переносах). */
+    private val _rules = MutableStateFlow<List<SenderRule>>(emptyList())
+    val rules: StateFlow<List<SenderRule>> = _rules.asStateFlow()
+
+    /** Ящик → (папка на сервере → папка приложения). Нужно, чтобы перераспределять без сети. */
+    private val folderCats = ConcurrentHashMap<String, Map<String, String?>>()
+
     fun init(context: Context) {
         if (ready) return
         synchronized(this) {
@@ -76,11 +84,93 @@ object Repository {
             _assignments.value = read("assignments.json") ?: emptyMap()
             _settings.value = read("settings.json") ?: Settings()
             _messages.value = _accounts.value.associate { it.id to (read<List<MailMessage>>("messages_${it.id}.json") ?: emptyList()) }
+            _rules.value = read("rules.json") ?: emptyList()
+            read<Map<String, Map<String, String?>>>("folder_map.json")?.let { folderCats.putAll(it) }
             ready = true
         }
     }
 
     // ---------- папки и раскладка ----------
+
+    /** Итоговая папка письма: ручной перенос важнее всего, затем автоматическая раскладка. */
+    fun categoryOf(m: MailMessage): String? {
+        val manual = _assignments.value[m.key]
+        return when {
+            manual == null -> m.autoCategory
+            manual.isEmpty() -> null
+            else -> manual
+        }
+    }
+
+    /** «Тихая» папка: рассылки и скидки без уведомлений и красных счётчиков (если включено). */
+    fun isQuiet(categoryId: String?): Boolean =
+        _settings.value.quietPromos && (categoryId == Categorizer.NEWSLETTERS || categoryId == Categorizer.SALES)
+
+    private fun ownEmails() = _accounts.value.map { it.email }.toSet()
+
+    /**
+     * Автоматическая папка письма. Порядок: правило по отправителю → папка из самой почты →
+     * встроенная раскладка (Чеки, Билеты…). Каждую ступень можно выключить в «Умных функциях».
+     */
+    private fun autoCategoryFor(m: MailMessage, own: Set<String>): String? {
+        val s = _settings.value
+        val email = m.fromEmail.lowercase()
+        val rules = _rules.value
+        (rules.firstOrNull { !it.pattern.startsWith("@") && it.matches(email) } ?: rules.firstOrNull { it.matches(email) })
+            ?.let { r -> return r.categoryId.takeIf { id -> id.isNotEmpty() && _categories.value.any { it.id == id } } }
+        if (s.serverFolders) folderCats[m.accountId]?.get(m.folder)?.let { return it }
+        return if (s.autoSort) Categorizer.categorize(m, own) else null
+    }
+
+    /**
+     * Перераспределить все скачанные письма по текущим правилам и настройкам — без обращения к серверу.
+     * Возвращает число писем, которые сменили папку.
+     */
+    suspend fun redistribute(): Int = withContext(Dispatchers.Default) {
+        val own = ownEmails()
+        var changed = 0
+        _messages.update { map ->
+            changed = 0
+            map.mapValues { (_, list) ->
+                list.map { m ->
+                    val c = autoCategoryFor(m, own)
+                    if (c != m.autoCategory) { changed++; m.copy(autoCategory = c) } else m
+                }
+            }
+        }
+        _messages.value.keys.forEach(::persistMessages)
+        changed
+    }
+
+    /** То же, но из фона: результат придёт в [onDone] на главном потоке. Удобно звать из шторок и диалогов. */
+    fun redistributeAsync(onDone: (Int) -> Unit = {}) {
+        io.launch {
+            val n = redistribute()
+            withContext(Dispatchers.Main) { onDone(n) }
+        }
+    }
+
+    fun addRule(pattern: String, categoryId: String?) {
+        val p = pattern.trim().lowercase().let { if (!it.contains('@')) "@$it" else it }
+        _rules.update { list -> list.filterNot { it.pattern == p } + SenderRule(p, categoryId ?: "", System.currentTimeMillis()) }
+        persist("rules.json", _rules.value)
+    }
+
+    fun removeRule(pattern: String) {
+        _rules.update { list -> list.filterNot { it.pattern == pattern } }
+        persist("rules.json", _rules.value)
+    }
+
+    /**
+     * Обучение на ручном переносе: письма от этого отправителя дальше идут в ту же папку,
+     * уже скачанные — перераспределяются. В [onDone] — сколько ещё писем переехало.
+     */
+    fun learnFromMove(m: MailMessage, categoryId: String?, onDone: (Int) -> Unit) {
+        val email = m.fromEmail.lowercase()
+        if (!_settings.value.learnFromMoves || email.isBlank() || !email.contains('@')) return onDone(0)
+        addRule(email, categoryId)
+        redistributeAsync(onDone)
+    }
 
     fun assign(m: MailMessage, categoryId: String?) {
         _assignments.update { it + (m.key to (categoryId ?: "")) }
@@ -243,7 +333,11 @@ object Repository {
 
         ImapConnection(acc, password(acc)).use { c ->
             val folders = MailClient.listFolders(c)
-            val catByFolder = folders.associate { it.fullName to categoryForServerFolder(it) }
+            val catByFolder = folders.associate {
+                it.fullName to (if (_settings.value.serverFolders) categoryForServerFolder(it) else null)
+            }
+            folderCats[acc.id] = catByFolder
+            persist("folder_map.json", HashMap(folderCats))
             val states = folders.associate { it.fullName to MailClient.folderState(c, it.fullName) }
 
             // Удалённые на сервере письма убираем, флаги (прочитано, важное) обновляем у всех.
@@ -324,8 +418,8 @@ object Repository {
         List(minOf(n, q.size)) { q.removeFirst() }
     }
 
-    private fun recategorize(m: MailMessage, folderCategory: String?, own: Set<String>): String? =
-        folderCategory ?: Categorizer.categorize(m, own)
+    @Suppress("UNUSED_PARAMETER") // папка с сервера уже учтена через folderCats
+    private fun recategorize(m: MailMessage, folderCategory: String?, own: Set<String>): String? = autoCategoryFor(m, own)
 
     /** Добавляет письма в кэш ящика (без дублей, по дате). Возвращает добавленные. */
     private fun merge(accountId: String, add: List<MailMessage>, folderCategory: String?, own: Set<String>): List<MailMessage> {

@@ -58,6 +58,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.vestari.data.MailBody
 import app.vestari.data.MailClient
 import app.vestari.data.Repository
+import app.vestari.data.Smart
+import app.vestari.ui.components.OtpChip
 import app.vestari.ui.LocalNav
 import app.vestari.ui.LocalToasts
 import app.vestari.ui.Route
@@ -153,6 +155,17 @@ fun MessageScreen(key: String) {
                                 .background(AppTheme.extra.accentSoft, RoundedCornerShape(50))
                                 .padding(horizontal = 12.dp, vertical = 4.dp),
                         )
+                    }
+                    val code = remember(body) {
+                        val b = body
+                        if (!Repository.settings.value.otpCodes || b == null) null
+                        else Smart.otp(m.subject, b.text ?: b.html?.let(MailClient::htmlToText).orEmpty())
+                    }
+                    if (code != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Код подтверждения — нажмите, чтобы скопировать",
+                            style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
+                        OtpChip(code, Modifier.padding(top = 6.dp))
                     }
                     Spacer(Modifier.height(16.dp))
                 }

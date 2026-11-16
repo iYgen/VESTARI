@@ -92,6 +92,16 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import app.vestari.data.ListStyle
+import app.vestari.data.Smart
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import app.vestari.ui.components.spacing
 
 @Composable
@@ -399,6 +409,23 @@ fun ProfileScreen() {
             ) { v -> Repository.updateSettings { it.copy(autoImages = v) } }
         }
 
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth().bouncyClick { nav.push(Route.Smart) },
+        ) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.onPrimary)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Умные функции", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimary)
+                    Text("Автораскладка, правила, коды из SMS-писем, тихие рассылки",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f))
+                }
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onPrimary)
+            }
+        }
+
         Card { FolderOrder() }
 
         Card { app.vestari.update.UpdateCard() }
@@ -443,6 +470,221 @@ fun ProfileScreen() {
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Отмена") } },
         )
     }
+}
+
+// ------------------------- Умные функции -------------------------
+
+@Composable
+fun SmartScreen() {
+    val nav = LocalNav.current
+    val toasts = LocalToasts.current
+    val settings by Repository.settings.collectAsState()
+    val rules by Repository.rules.collectAsState()
+    val categories by Repository.categories.collectAsState()
+    val messagesMap by Repository.messages.collectAsState()
+    var addingRule by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+
+    val stats = remember(messagesMap) {
+        val all = messagesMap.values.flatten()
+        Triple(all.size, all.count { it.autoCategory != null }, all.count { Smart.isFresh(it) && Smart.otp(it) != null })
+    }
+    val catName = categories.associate { it.id to it.name }
+
+    /** Изменили настройку, влияющую на раскладку, — сразу перераспределяем письма. */
+    fun changeSorting(block: (app.vestari.data.Settings) -> app.vestari.data.Settings) {
+        Repository.updateSettings(block)
+        busy = true
+        Repository.redistributeAsync { n ->
+            busy = false
+            if (n > 0) toasts.show("Перераспределено писем: $n")
+        }
+    }
+
+    Surface(Modifier.fillMaxSize(), color = AppTheme.extra.bgTop) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(Modifier.statusBarsPadding().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { nav.pop() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
+                Text("Умные функции", style = titleStyle(settings.titleSize))
+            }
+
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "Разложено автоматически: ${stats.second} из ${stats.first} писем",
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    "Всё работает прямо на телефоне — письма никуда не отправляются.",
+                    style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(top = 4.dp),
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = {
+                        busy = true
+                        Repository.redistributeAsync { n ->
+                            busy = false
+                            toasts.show(if (n == 0) "Всё уже разложено по местам" else "Перераспределено писем: $n")
+                        }
+                    },
+                    enabled = !busy,
+                    shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    Text(if (busy) "Перераспределяю…" else "Перераспределить все письма")
+                }
+            }
+
+            Card {
+                Text("Раскладка по папкам", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
+                SwitchRow(
+                    "Автораскладка",
+                    "Чеки, скидки, билеты, рассылки, госписьма и письма себе определяются по отправителю и теме",
+                    settings.autoSort,
+                ) { v -> changeSorting { it.copy(autoSort = v) } }
+                SwitchRow(
+                    "Учиться на моих переносах",
+                    "Перенесли письмо в папку — остальные письма этого отправителя (и будущие) пойдут туда же",
+                    settings.learnFromMoves,
+                ) { v -> Repository.updateSettings { it.copy(learnFromMoves = v) } }
+                SwitchRow(
+                    "Папки из почты",
+                    "Папки, созданные в Mail.ru и других ящиках, становятся папками Vestari",
+                    settings.serverFolders,
+                ) { v ->
+                    changeSorting { it.copy(serverFolders = v) }
+                    if (v) Repository.refresh()
+                }
+            }
+
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Правила", style = MaterialTheme.typography.titleMedium)
+                        Text("Важнее автораскладки. Адрес — один отправитель, @домен — весь магазин или сервис.",
+                            style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
+                    }
+                    IconButton(onClick = { addingRule = true }) {
+                        Icon(Icons.Rounded.Add, "Добавить правило", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                if (rules.isEmpty()) {
+                    Text(
+                        "Пока правил нет. Они появятся сами, когда вы перенесёте письмо в папку, или добавьте вручную.",
+                        style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                rules.sortedByDescending { it.created }.forEach { r ->
+                    key(r.pattern) {
+                        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.pattern, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                                Text(
+                                    "→ " + (if (r.categoryId.isEmpty()) "без папки" else catName[r.categoryId] ?: "удалённая папка"),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            IconButton(onClick = {
+                                Repository.removeRule(r.pattern)
+                                Repository.redistributeAsync()
+                                toasts.show("Правило удалено", "Отменить", onAction = {
+                                    Repository.addRule(r.pattern, r.categoryId.ifEmpty { null })
+                                    Repository.redistributeAsync()
+                                })
+                            }) { Icon(Icons.Outlined.Delete, "Удалить правило", tint = AppTheme.extra.muted) }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                Text("Список и уведомления", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
+                SwitchRow(
+                    "Коды подтверждения",
+                    "Код из письма виден прямо в списке и в уведомлении — нажмите, чтобы скопировать" +
+                        if (stats.third > 0) " (сейчас: ${stats.third})" else "",
+                    settings.otpCodes,
+                ) { v -> Repository.updateSettings { it.copy(otpCodes = v) } }
+                SwitchRow(
+                    "Тихие рассылки и скидки",
+                    "Без уведомлений и красных счётчиков — заглянете, когда будет время",
+                    settings.quietPromos,
+                ) { v -> Repository.updateSettings { it.copy(quietPromos = v) } }
+                SwitchRow(
+                    "Чистые «Все»",
+                    "Рассылки и скидки не показываются во «Все», только в своих папках",
+                    settings.cleanInbox,
+                ) { v -> Repository.updateSettings { it.copy(cleanInbox = v) } }
+                SwitchRow(
+                    "Группировать по датам",
+                    "Разделители «Сегодня», «Вчера», «На этой неделе»…",
+                    settings.groupByDate,
+                ) { v -> Repository.updateSettings { it.copy(groupByDate = v) } }
+            }
+            Spacer(Modifier.navigationBarsPadding().height(40.dp))
+        }
+    }
+
+    if (addingRule) {
+        RuleDialog(categories, onDismiss = { addingRule = false }) { pattern, catId ->
+            addingRule = false
+            Repository.addRule(pattern, catId)
+            busy = true
+            Repository.redistributeAsync { n ->
+                busy = false
+                toasts.show(if (n > 0) "Правило добавлено, перенесено писем: $n" else "Правило добавлено")
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuleDialog(categories: List<Category>, onDismiss: () -> Unit, onSave: (String, String?) -> Unit) {
+    var pattern by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf(categories.firstOrNull()?.id) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = AppTheme.extra.card,
+        title = { Text("Новое правило") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    pattern, { pattern = it.trim() },
+                    label = { Text("Адрес или @домен") },
+                    placeholder = { Text("@ozon.ru") },
+                    singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Класть в папку", style = MaterialTheme.typography.labelLarge)
+                Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                    categories.forEach { c ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { selected = c.id }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected == c.id, { selected = c.id })
+                            CategoryTile(c.id, iconFor(c.icon), c.name, 28.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(c.name)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(pattern, selected) }, enabled = pattern.length >= 3) { Text("Сохранить") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
 }
 
 @Composable

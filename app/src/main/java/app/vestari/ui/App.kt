@@ -88,6 +88,7 @@ sealed interface Route {
     data class Message(val key: String) : Route
     data class Compose(val replyToKey: String? = null, val to: String = "") : Route
     data object AddAccount : Route
+    data object Smart : Route
 }
 
 enum class Tab(val title: String, val icon: ImageVector) {
@@ -210,6 +211,7 @@ fun VestariApp(openMessageKey: String?, onOpenedFromNotification: () -> Unit) {
                                 is Route.Message -> MessageScreen(route.key)
                                 is Route.Compose -> ComposeScreen(route.replyToKey, route.to)
                                 Route.AddAccount -> AddAccountScreen()
+                                Route.Smart -> app.vestari.ui.screens.SmartScreen()
                             }
                         }
                     }

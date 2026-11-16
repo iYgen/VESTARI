@@ -72,7 +72,38 @@ data class Settings(
     val titleSize: Int = 0,
     /** Показывать превью текста письма. */
     val showPreview: Boolean = true,
+
+    // ---- умные функции (экран «Умные функции») ----
+    /** Автоматически раскладывать письма по встроенным папкам (Чеки, Билеты…). */
+    val autoSort: Boolean = true,
+    /** Запоминать ручные переносы и раскладывать так же остальные письма отправителя. */
+    val learnFromMoves: Boolean = true,
+    /** Папки, созданные в самой почте, становятся папками приложения. */
+    val serverFolders: Boolean = true,
+    /** Находить коды подтверждения и показывать их с кнопкой «Скопировать». */
+    val otpCodes: Boolean = true,
+    /** Разделители «Сегодня», «Вчера», «На этой неделе» в списке. */
+    val groupByDate: Boolean = true,
+    /** Рассылки и скидки не дают уведомлений и красных счётчиков. */
+    val quietPromos: Boolean = true,
+    /** Во «Все» не показывать рассылки и скидки — они остаются в своих папках. */
+    val cleanInbox: Boolean = false,
 )
+
+/**
+ * Правило раскладки: письма от адреса (`ivan@shop.ru`) или домена (`@shop.ru`) идут в папку.
+ * [categoryId] пустой — «без папки».
+ */
+@Serializable
+data class SenderRule(val pattern: String, val categoryId: String, val created: Long = 0L) {
+    fun matches(email: String): Boolean {
+        val e = email.lowercase()
+        if (!pattern.startsWith("@")) return e == pattern
+        val domain = e.substringAfter('@', "")
+        val p = pattern.drop(1)
+        return domain == p || domain.endsWith(".$p")
+    }
+}
 
 /** Ход загрузки писем ящика: сколько уже скачано из общего числа на сервере. */
 data class SyncProgress(val loaded: Int = 0, val total: Int = 0, val active: Boolean = false) {

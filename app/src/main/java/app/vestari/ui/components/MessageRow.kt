@@ -42,6 +42,42 @@ import app.vestari.data.Category
 import app.vestari.data.ListStyle
 import app.vestari.data.MailMessage
 import app.vestari.ui.theme.AppTheme
+import app.vestari.ui.LocalToasts
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material3.Icon
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.sp
+
+/** Найденный код подтверждения: нажатие копирует его в буфер обмена. */
+@Composable
+fun OtpChip(code: String, modifier: Modifier = Modifier) {
+    val clipboard = LocalClipboardManager.current
+    val toasts = LocalToasts.current
+    Row(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary)
+            .bouncyClick {
+                clipboard.setText(AnnotatedString(code))
+                toasts.show("Код $code скопирован")
+            }
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Key, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            code.chunked(if (code.length > 4) 3 else 4).joinToString(" "),
+            color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(Icons.Outlined.ContentCopy, "Скопировать", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
+    }
+}
 
 /** Отступ между письмами в списке для каждого вида. */
 fun ListStyle.spacing() = when (this) {
@@ -62,6 +98,7 @@ fun MessageCard(
     showAccount: String? = null,
     style: ListStyle = ListStyle.Cards,
     showPreview: Boolean = true,
+    otp: String? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onStar: () -> Unit,
@@ -146,6 +183,7 @@ fun MessageCard(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        if (otp != null) OtpChip(otp, Modifier.padding(top = 6.dp))
                         if (showAccount != null) {
                             Text(showAccount, style = MaterialTheme.typography.labelSmall, color = primary,
                                 modifier = Modifier.padding(top = 2.dp))

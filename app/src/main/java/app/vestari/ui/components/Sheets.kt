@@ -268,8 +268,24 @@ fun MoveToFolderSheet(message: MailMessage, onDismiss: () -> Unit) {
     fun pick(id: String?, name: String) {
         Repository.assign(message, id)
         onDismiss()
-        toasts.show(if (id == null) "Убрано из папок" else "Перенесено в «$name»", "Отменить",
-            onAction = { Repository.assign(message, current) })
+        val where = if (id == null) "Убрано из папок" else "Перенесено в «$name»"
+        // Умная функция: запоминаем выбор для отправителя и перераспределяем остальные его письма.
+        val hadRule = Repository.rules.value.firstOrNull { it.pattern == message.fromEmail.lowercase() }
+        Repository.learnFromMove(message, id) { moved ->
+            val sender = message.fromName.ifBlank { message.fromEmail }
+            toasts.show(
+                if (moved > 0) "$where. Ещё $moved от «$sender» — туда же" else where,
+                "Отменить",
+                onAction = {
+                    Repository.assign(message, current)
+                    if (Repository.settings.value.learnFromMoves) {
+                        if (hadRule != null) Repository.addRule(hadRule.pattern, hadRule.categoryId.ifEmpty { null })
+                        else Repository.removeRule(message.fromEmail.lowercase())
+                        Repository.redistributeAsync()
+                    }
+                },
+            )
+        }
     }
 
     ModalBottomSheet(
