@@ -2,18 +2,28 @@
 
 package app.vestari.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,37 +36,48 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AllInbox
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
-import androidx.compose.material.icons.outlined.MarkunreadMailbox
+import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,13 +85,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import app.vestari.R
+import app.vestari.data.Categorizer
 import app.vestari.data.Category
+import app.vestari.data.ListStyle
 import app.vestari.data.MailMessage
 import app.vestari.data.Repository
+import app.vestari.data.Smart
+import app.vestari.data.SyncProgress
 import app.vestari.ui.LocalNav
 import app.vestari.ui.LocalToasts
 import app.vestari.ui.Route
@@ -82,30 +124,11 @@ import app.vestari.ui.components.FolderDialog
 import app.vestari.ui.components.MessageCard
 import app.vestari.ui.components.MoveToFolderSheet
 import app.vestari.ui.components.bouncyClick
+import app.vestari.ui.components.iconFor
+import app.vestari.ui.components.spacing
+import app.vestari.ui.components.tileColors
 import app.vestari.ui.sharedCard
 import app.vestari.ui.theme.AppTheme
-import kotlinx.coroutines.launch
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import app.vestari.R
-import app.vestari.data.ListStyle
-import app.vestari.data.SyncProgress
-import app.vestari.data.Categorizer
-import app.vestari.data.Smart
-import app.vestari.ui.components.spacing
 import java.util.Locale
 
 /** Разделитель в списке писем («Сегодня», «Вчера»…). */
@@ -190,11 +213,16 @@ fun categoryOf(m: MailMessage, assignments: Map<String, String>): String? {
     }
 }
 
+/** Сколько надо потянуть список вниз: до обновления и до панели папок. */
+private val RefreshPull = 72.dp
+private val PanelPull = 150.dp
+
 @Composable
 fun InboxScreen() {
     val nav = LocalNav.current
     val toasts = LocalToasts.current
-    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
 
     val accounts by Repository.accounts.collectAsState()
     val settings by Repository.settings.collectAsState()
@@ -207,13 +235,17 @@ fun InboxScreen() {
     var moveTarget by remember { mutableStateOf<MailMessage?>(null) }
     var creatingFolder by remember { mutableStateOf(false) }
     var autoSynced by rememberSaveable { mutableStateOf(false) }
+    /** Выбранные письма (по ключу). Не пусто — режим выделения. */
+    val selection = remember { mutableStateListOf<String>() }
+    /** Письмо, у которого свайпом влево открыты кнопки «Удалить / В спам». */
+    var actionKey by remember { mutableStateOf<String?>(null) }
 
     val selectedId = settings.selectedAccountId?.takeIf { id -> accounts.any { it.id == id } }
         ?: accounts.singleOrNull()?.id
     val selectedAccount = accounts.firstOrNull { it.id == selectedId }
     val all: List<MailMessage> = remember(messagesMap, selectedId) {
         if (selectedId == null) messagesMap.values.flatten().sortedByDescending { it.date }
-        else messagesMap[selectedId].orEmpty()
+        else messagesMap[selectedId].orEmpty().sortedByDescending { it.date }
     }
     val catById = categories.associateBy { it.id }
     val visible = remember(all, nav.folder, assignments, settings.cleanInbox) {
@@ -226,24 +258,40 @@ fun InboxScreen() {
             else -> all.filter { categoryOf(it, assignments) == nav.folder }
         }
     }
-    val unreadByCat = remember(all, assignments, settings.quietPromos) {
+    // Непрочитанные по папкам: у папки появляется жирное название и «(N)».
+    val unreadByCat = remember(all, assignments) {
         all.filter { !it.seen }.groupingBy { categoryOf(it, assignments) }.eachCount()
-            .filterKeys { !Repository.isQuiet(it) }
     }
-    // Строки списка: письма и (если включено) разделители «Сегодня», «Вчера»…
-    val rows: List<Any> = remember(visible, settings.groupByDate) {
-        if (!settings.groupByDate) visible
-        else buildList {
+    // Во «Все» письма выбранных папок сворачиваются в одну строку на месте самого свежего письма (как в Mail.ru).
+    val bundles: Map<String, Bundle> = remember(visible, nav.folder, settings.bundleFolders, settings.bundled, categories, assignments) {
+        if (!settings.bundleFolders || nav.folder != null) emptyMap()
+        else visible.groupBy { categoryOf(it, assignments) }
+            .filterKeys { it != null && it in settings.bundled }
+            .mapNotNull { (id, list) -> catById[id]?.let { id!! to Bundle(it, list) } }
+            .toMap()
+    }
+    // Строки списка: письма, свёрнутые папки и (если включено) разделители «Сегодня», «Вчера»…
+    val rows: List<Any> = remember(visible, bundles, settings.groupByDate) {
+        buildList {
             var last: String? = null
             val now = System.currentTimeMillis()
+            val placed = mutableSetOf<String>()
             visible.forEach { m ->
-                val b = Smart.dateBucket(m.date, now)
-                if (b != last) { add(DateHeader(b)); last = b }
-                add(m)
+                val cat = categoryOf(m, assignments)
+                val row: Any = if (cat != null && cat in bundles) {
+                    if (!placed.add(cat)) return@forEach
+                    bundles.getValue(cat)
+                } else m
+                if (settings.groupByDate) {
+                    val b = Smart.dateBucket(m.date, now)
+                    if (b != last) { add(DateHeader(b)); last = b }
+                }
+                add(row)
             }
         }
     }
     val flaggedCount = remember(all) { all.count { it.flagged } }
+    val selectedMsgs = remember(all, selection.toList()) { all.filter { it.key in selection } }
     // Прогресс загрузки: по выбранному ящику или суммарно по всем.
     val progress = remember(progressMap, selectedId) {
         val list = if (selectedId != null) listOfNotNull(progressMap[selectedId]) else progressMap.values.toList()
@@ -256,128 +304,250 @@ fun InboxScreen() {
     LaunchedEffect(accounts.size) {
         if (accounts.isNotEmpty() && !autoSynced) { autoSynced = true; Repository.refresh() }
     }
+    // Письмо пропало (удалено, перенесено) — снимаем с него выделение.
+    LaunchedEffect(all) { selection.retainAll(all.map { it.key }.toSet()) }
 
-    Box(Modifier.fillMaxSize()) {
-        PullToRefreshBox(
-            isRefreshing = syncing,
-            onRefresh = { Repository.refresh(selectedId) },
-            modifier = Modifier.fillMaxSize(),
+    BackHandler(selection.isNotEmpty()) { selection.clear() }
+    BackHandler(actionKey != null && selection.isEmpty()) { actionKey = null }
+
+    fun toggle(m: MailMessage) {
+        actionKey = null
+        if (m.key in selection) selection.remove(m.key) else selection.add(m.key)
+    }
+
+    fun selectAll(list: List<MailMessage>) {
+        val keys = list.map { it.key }.filterNot { it in selection }
+        selection.addAll(keys)
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        toasts.show("Выбрано писем: ${selection.size}")
+    }
+
+    fun deleteAll(list: List<MailMessage>) {
+        if (list.isEmpty()) return
+        selection.clear(); actionKey = null
+        Repository.hideAll(list)
+        toasts.show(if (list.size == 1) "Письмо удалено" else "Удалено писем: ${list.size}", "Отменить",
+            onAction = { Repository.unhideAll(list) },
+            onTimeout = { list.forEach { Repository.commitDelete(it) } })
+    }
+
+    fun spamAll(list: List<MailMessage>) {
+        if (list.isEmpty()) return
+        selection.clear(); actionKey = null
+        Repository.hideAll(list)
+        toasts.show(if (list.size == 1) "Письмо в спаме" else "В спам: ${list.size}", "Отменить",
+            onAction = { Repository.unhideAll(list) },
+            onTimeout = { list.forEach { Repository.commitSpam(it) } })
+    }
+
+    // ---- жест «потянуть вниз»: немного — обновить почту, дальше — панель папок ----
+    var pull by remember { mutableFloatStateOf(0f) }
+    val refreshPx = with(density) { RefreshPull.toPx() }
+    val panelPx = with(density) { PanelPull.toPx() }
+    val onRelease by rememberUpdatedState { p: Float ->
+        when {
+            p >= panelPx -> nav.folderPanelOpen = true
+            p >= refreshPx -> Repository.refresh(selectedId)
+        }
+    }
+    val pullConnection = remember(refreshPx, panelPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // Список «оттянут» и палец идёт вверх — сначала убираем оттяжку.
+                if (available.y < 0 && pull > 0f) {
+                    val used = maxOf(available.y, -pull)
+                    pull += used
+                    return Offset(0f, used)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput || available.y <= 0f) return Offset.Zero
+                val before = pull
+                pull = (pull + available.y * 0.5f).coerceAtMost(panelPx * 1.35f)
+                if ((before < refreshPx && pull >= refreshPx) || (before < panelPx && pull >= panelPx)) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pull <= 0f) return Velocity.Zero
+                val p = pull
+                onRelease(p)
+                animate(p, 0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { v, _ -> pull = v }
+                return available
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize().nestedScroll(pullConnection)) {
+        PullHint(pull, refreshPx, panelPx, Modifier.align(Alignment.TopCenter).statusBarsPadding())
+
+        LazyColumn(
+            Modifier.fillMaxSize().graphicsLayer { translationY = pull },
+            state = listState,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 190.dp),
+            verticalArrangement = Arrangement.spacedBy(style.spacing()),
         ) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                state = listState,
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 190.dp),
-                verticalArrangement = Arrangement.spacedBy(style.spacing()),
-            ) {
-                item(key = "header") {
-                    Column(Modifier.statusBarsPadding().padding(top = 8.dp)) {
-                        Header(
-                            avatar = { AccountAvatar(selectedAccount, 42.dp) },
-                            title = when (nav.folder) {
-                                null -> "Входящие"
-                                FLAGGED -> "Важные"
-                                else -> catById[nav.folder]?.name ?: "Входящие"
-                            },
-                            titleSize = settings.titleSize,
-                            onAccounts = { nav.accountSheetOpen = true },
-                            onSearch = { nav.tab = Tab.Search },
-                            onCompose = { nav.push(Route.Compose()) },
-                        )
-                        if (accounts.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                                AccountPill(selectedAccount?.email ?: "Все ящики") { nav.accountSheetOpen = true }
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-                }
-
-                // Папки — одной строкой, листаются вбок. Порядок меняется на вкладке «Папки».
-                item(key = "chips") {
-                    LazyRow(
-                        Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                        contentPadding = PaddingValues(horizontal = 0.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        item(key = "all") { FolderChip("Все", nav.folder == null, badge = 0) { nav.folder = null } }
-                        if (flaggedCount > 0) item(key = FLAGGED) {
-                            FolderChip("★ Важные", nav.folder == FLAGGED, badge = 0) {
-                                nav.folder = if (nav.folder == FLAGGED) null else FLAGGED
-                            }
-                        }
-                        items(categories, key = { it.id }) { c ->
-                            FolderChip(c.name, nav.folder == c.id, badge = unreadByCat[c.id] ?: 0) {
-                                nav.folder = if (nav.folder == c.id) null else c.id
-                            }
-                        }
-                        item(key = "add") { AddChip { creatingFolder = true } }
-                    }
-                }
-
-                if (progress != null && all.isNotEmpty()) {
-                    item(key = "progress") { LoadingBanner(progress) }
-                }
-
-                if (accounts.isEmpty()) {
-                    item(key = "empty-accounts") { NoAccountsCard { nav.push(Route.AddAccount) } }
-                } else if (all.isEmpty() && (progress != null || syncing)) {
-                    item(key = "loading") { LoadingCard(progress ?: SyncProgress(active = true)) }
-                } else if (visible.isEmpty() && !syncing) {
-                    item(key = "empty") {
-                        Text(
-                            when (nav.folder) {
-                                null -> "Писем пока нет"
-                                FLAGGED -> "Нет писем, отмеченных флажком"
-                                else -> "В этой папке пусто"
-                            },
-                            color = AppTheme.extra.muted, textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                        )
-                    }
-                }
-
-                items(
-                    rows,
-                    key = { r -> if (r is MailMessage) r.key else "h_" + (r as DateHeader).title },
-                    contentType = { r -> if (r is MailMessage) 0 else 1 },
-                ) { r ->
-                    if (r is DateHeader) {
-                        Text(
-                            r.title, style = MaterialTheme.typography.labelLarge, color = AppTheme.extra.muted,
-                            modifier = Modifier.animateItem().padding(start = 8.dp, top = 10.dp, bottom = 2.dp),
-                        )
-                        return@items
-                    }
-                    val m = r as MailMessage
-                    SwipeableMessage(
-                        m = m,
-                        style = style,
-                        showPreview = settings.showPreview,
-                        otp = if (settings.otpCodes && Smart.isFresh(m)) Smart.otp(m) else null,
-                        category = categoryOf(m, assignments)?.let { catById[it] },
-                        showAccount = if (selectedId == null && accounts.size > 1) accounts.firstOrNull { it.id == m.accountId }?.email else null,
-                        modifier = Modifier.animateItem(),
-                        onOpen = { nav.push(Route.Message(m.key)) },
-                        onMove = { moveTarget = m },
-                        onDelete = {
-                            Repository.hideLocally(m)
-                            toasts.show("Письмо удалено", "Отменить",
-                                onAction = { Repository.unhide(m) },
-                                onTimeout = { Repository.commitDelete(m) })
+            item(key = "header") {
+                Column(Modifier.statusBarsPadding().padding(top = 8.dp)) {
+                    Header(
+                        avatar = { AccountAvatar(selectedAccount, 42.dp) },
+                        title = when (nav.folder) {
+                            null -> "Входящие"
+                            FLAGGED -> "Важные"
+                            else -> catById[nav.folder]?.name ?: "Входящие"
                         },
+                        titleSize = settings.titleSize,
+                        syncing = syncing,
+                        onAccounts = { nav.accountSheetOpen = true },
+                        onSearch = { nav.tab = Tab.Search },
+                        onCompose = { nav.push(Route.Compose()) },
                     )
+                    if (accounts.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            AccountPill(selectedAccount?.email ?: "Все ящики") { nav.accountSheetOpen = true }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+
+            // Папки — одной строкой, листаются вбок. Долгое нажатие — выделить все письма папки.
+            item(key = "chips") {
+                val dark = AppTheme.extra.isDark
+                LazyRow(
+                    Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    item(key = "panel") { RoundChip(Icons.Outlined.FolderOpen, "Все папки ящика") { nav.folderPanelOpen = true } }
+                    item(key = "all") {
+                        FolderChip(
+                            "Все", nav.folder == null, badge = all.count { !it.seen }, icon = Icons.Outlined.AllInbox,
+                            onLongClick = { selectAll(visible) },
+                        ) { nav.folder = null }
+                    }
+                    if (flaggedCount > 0) item(key = FLAGGED) {
+                        FolderChip(
+                            "Важные", nav.folder == FLAGGED, badge = all.count { it.flagged && !it.seen },
+                            icon = Icons.Outlined.StarOutline, iconTint = Color(0xFFF5B400),
+                            onLongClick = { selectAll(all.filter { it.flagged }) },
+                        ) { nav.folder = if (nav.folder == FLAGGED) null else FLAGGED }
+                    }
+                    items(categories, key = { it.id }) { c ->
+                        FolderChip(
+                            c.name, nav.folder == c.id, badge = unreadByCat[c.id] ?: 0,
+                            icon = iconFor(c.icon), iconTint = tileColors(c.id, dark).second,
+                            onLongClick = { selectAll(all.filter { categoryOf(it, assignments) == c.id }) },
+                        ) { nav.folder = if (nav.folder == c.id) null else c.id }
+                    }
+                    item(key = "add") { RoundChip(Icons.Rounded.Add, "Новая папка") { creatingFolder = true } }
+                }
+            }
+
+            if (progress != null && all.isNotEmpty()) {
+                item(key = "progress") { LoadingBanner(progress) }
+            }
+
+            if (accounts.isEmpty()) {
+                item(key = "empty-accounts") { NoAccountsCard { nav.push(Route.AddAccount) } }
+            } else if (all.isEmpty() && (progress != null || syncing)) {
+                item(key = "loading") { LoadingCard(progress ?: SyncProgress(active = true)) }
+            } else if (visible.isEmpty() && !syncing) {
+                item(key = "empty") {
+                    Text(
+                        when (nav.folder) {
+                            null -> "Писем пока нет"
+                            FLAGGED -> "Нет писем, отмеченных флажком"
+                            else -> "В этой папке пусто"
+                        },
+                        color = AppTheme.extra.muted, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                    )
+                }
+            }
+
+            items(
+                rows,
+                key = { r ->
+                    when (r) {
+                        is MailMessage -> r.key
+                        is Bundle -> "b_" + r.category.id
+                        else -> "h_" + (r as DateHeader).title
+                    }
+                },
+                contentType = { r -> when (r) { is MailMessage -> 0; is Bundle -> 2; else -> 1 } },
+            ) { r ->
+                when (r) {
+                    is DateHeader -> Text(
+                        r.title, style = MaterialTheme.typography.labelLarge, color = AppTheme.extra.muted,
+                        modifier = Modifier.animateItem().padding(start = 8.dp, top = 10.dp, bottom = 2.dp),
+                    )
+                    is Bundle -> BundleRow(r, Modifier.animateItem()) { nav.folder = r.category.id }
+                    is MailMessage -> {
+                        val m = r
+                        if (actionKey == m.key && selection.isEmpty()) {
+                            SwipeActions(
+                                style = style, modifier = Modifier.animateItem(),
+                                onSpam = { spamAll(listOf(m)) },
+                                onDelete = { deleteAll(listOf(m)) },
+                                onCancel = { actionKey = null },
+                            )
+                        } else SwipeableMessage(
+                            m = m,
+                            style = style,
+                            showPreview = settings.showPreview,
+                            otp = if (settings.otpCodes && Smart.isFresh(m)) Smart.otp(m) else null,
+                            category = categoryOf(m, assignments)?.let { catById[it] },
+                            showAccount = if (selectedId == null && accounts.size > 1) accounts.firstOrNull { it.id == m.accountId }?.email else null,
+                            selected = m.key in selection,
+                            swipeEnabled = selection.isEmpty(),
+                            modifier = Modifier.animateItem(),
+                            onOpen = { if (selection.isNotEmpty()) toggle(m) else { actionKey = null; nav.push(Route.Message(m.key)) } },
+                            onSelect = { toggle(m) },
+                            onMove = { if (selection.isNotEmpty()) toggle(m) else moveTarget = m },
+                            onReveal = { actionKey = m.key },
+                        )
+                    }
                 }
             }
         }
 
-        ComposeFab(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 20.dp, bottom = 100.dp)) {
-            nav.push(Route.Compose())
+        // Режим выделения: панель действий наверху поверх списка.
+        AnimatedVisibility(
+            selection.isNotEmpty(),
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut(),
+        ) {
+            SelectionBar(
+                count = selectedMsgs.size,
+                allRead = selectedMsgs.all { it.seen },
+                onClose = { selection.clear() },
+                onSelectAll = { selectAll(visible) },
+                onToggleRead = {
+                    val markRead = !selectedMsgs.all { it.seen }
+                    Repository.setSeenAll(selectedMsgs, markRead)
+                    toasts.show(if (markRead) "Отмечено прочитанными" else "Отмечено непрочитанными")
+                    selection.clear()
+                },
+                onSpam = { spamAll(selectedMsgs) },
+                onDelete = { deleteAll(selectedMsgs) },
+            )
+        }
+
+        if (selection.isEmpty()) {
+            ComposeFab(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 20.dp, bottom = 100.dp)) {
+                nav.push(Route.Compose())
+            }
         }
     }
 
     if (nav.accountSheetOpen) AccountSheet { nav.accountSheetOpen = false }
+    if (nav.folderPanelOpen) FolderPanel { nav.folderPanelOpen = false }
     moveTarget?.let { MoveToFolderSheet(it) { moveTarget = null } }
     if (creatingFolder) {
         FolderDialog("Новая папка", onDismiss = { creatingFolder = false }) { name, icon ->
@@ -388,11 +558,42 @@ fun InboxScreen() {
     }
 }
 
+/** Подсказка над оттянутым списком: «обновить» → «откроются папки». */
+@Composable
+private fun PullHint(pull: Float, refreshPx: Float, panelPx: Float, modifier: Modifier) {
+    if (pull <= 1f) return
+    val stage = when {
+        pull >= panelPx -> 2
+        pull >= refreshPx -> 1
+        else -> 0
+    }
+    Column(
+        modifier.padding(top = 10.dp).alpha((pull / refreshPx).coerceIn(0f, 1f)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            if (stage == 2) Icons.Outlined.FolderOpen else Icons.Rounded.Refresh, null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = if (stage == 2) 0f else pull / refreshPx * 270f },
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            when (stage) {
+                2 -> "Отпустите — откроются папки"
+                1 -> "Отпустите — обновить · тяните дальше — папки"
+                else -> "Потяните, чтобы обновить"
+            },
+            style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
+        )
+    }
+}
+
 @Composable
 private fun Header(
     avatar: @Composable () -> Unit,
     title: String,
     titleSize: Int,
+    syncing: Boolean,
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
@@ -406,15 +607,50 @@ private fun Header(
             Icon(Icons.Rounded.KeyboardArrowDown, "Аккаунты", tint = AppTheme.extra.muted)
         }
         Spacer(Modifier.width(10.dp))
-        Text(
-            title,
-            style = titleStyle(titleSize),
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = titleStyle(titleSize), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            // Маленький индикатор проверки почты вместо крутилки на весь экран.
+            AnimatedVisibility(syncing, enter = fadeIn(), exit = fadeOut()) {
+                CircularProgressIndicator(Modifier.padding(start = 10.dp).size(16.dp), strokeWidth = 2.dp)
+            }
+        }
         IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
         IconButton(onClick = onCompose) {
             Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+/**
+ * Панель режима выделения. Точка — отметить выбранные непрочитанными (если все прочитаны),
+ * иначе открытый конверт — отметить прочитанными. Рядом «В спам» и «Удалить».
+ */
+@Composable
+private fun SelectionBar(
+    count: Int,
+    allRead: Boolean,
+    onClose: () -> Unit,
+    onSelectAll: () -> Unit,
+    onToggleRead: () -> Unit,
+    onSpam: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(color = AppTheme.extra.card, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Снять выделение") }
+            Text("$count", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(start = 4.dp))
+            IconButton(onClick = onSelectAll) { Icon(Icons.Outlined.SelectAll, "Выбрать все письма папки") }
+            IconButton(onClick = onToggleRead) {
+                if (allRead) {
+                    // Точка: отметить все выбранные непрочитанными.
+                    Box(Modifier.size(12.dp).clip(CircleShape).background(AppTheme.extra.unreadDot))
+                } else Icon(Icons.Outlined.MarkEmailRead, "Отметить прочитанными")
+            }
+            IconButton(onClick = onSpam) { Icon(Icons.Outlined.Report, "В спам") }
+            IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Удалить", tint = AppTheme.extra.unreadDot) }
         }
     }
 }
@@ -436,18 +672,53 @@ private fun AccountPill(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AddChip(onClick: () -> Unit) {
+private fun RoundChip(icon: ImageVector, description: String, onClick: () -> Unit) {
     Box(
         Modifier
             .padding(top = 6.dp)
-            .size(42.dp)
+            .size(40.dp)
             .clip(CircleShape)
             .background(AppTheme.extra.card.copy(alpha = 0.85f))
             .bouncyClick(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(Icons.Rounded.Add, "Новая папка", tint = MaterialTheme.colorScheme.primary) }
+    ) { Icon(icon, description, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp)) }
 }
 
+/** Кнопки, открывшиеся свайпом влево: «В спам», «Удалить», отмена. */
+@Composable
+private fun SwipeActions(style: ListStyle, modifier: Modifier, onSpam: () -> Unit, onDelete: () -> Unit, onCancel: () -> Unit) {
+    val h = when (style) { ListStyle.Cards -> 76.dp; ListStyle.Compact -> 64.dp; ListStyle.List -> 52.dp }
+    Row(
+        modifier.fillMaxWidth().height(h),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ActionPill(Icons.Outlined.Report, "В спам", Color(0xFFE08A1E), Modifier.weight(1f), onSpam)
+        ActionPill(Icons.Outlined.Delete, "Удалить", AppTheme.extra.unreadDot, Modifier.weight(1f), onDelete)
+        Box(
+            Modifier.size(h).clip(RoundedCornerShape(18.dp)).background(AppTheme.extra.card).bouncyClick(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Close, "Отмена", tint = AppTheme.extra.muted) }
+    }
+}
+
+@Composable
+private fun ActionPill(icon: ImageVector, text: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier.fillMaxSize().clip(RoundedCornerShape(18.dp)).background(color).bouncyClick(onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Color.White)
+        Spacer(Modifier.width(8.dp))
+        Text(text, color = Color.White, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/**
+ * Письмо со свайпами: слева направо — прочитано ↔ непрочитано (письмо остаётся на месте),
+ * справа налево — открываются кнопки «Удалить» и «В спам».
+ */
 @Composable
 private fun SwipeableMessage(
     m: MailMessage,
@@ -456,17 +727,21 @@ private fun SwipeableMessage(
     otp: String?,
     category: Category?,
     showAccount: String?,
+    selected: Boolean,
+    swipeEnabled: Boolean,
     modifier: Modifier,
     onOpen: () -> Unit,
+    onSelect: () -> Unit,
     onMove: () -> Unit,
-    onDelete: () -> Unit,
+    onReveal: () -> Unit,
 ) {
+    val current by rememberUpdatedState(m)
     val state = rememberSwipeToDismissBoxState(
-        positionalThreshold = { it * 0.35f },
+        positionalThreshold = { it * 0.3f },
         confirmValueChange = { v ->
             when (v) {
-                SwipeToDismissBoxValue.StartToEnd -> { Repository.setSeen(m, !m.seen); false } // вернётся на место
-                SwipeToDismissBoxValue.EndToStart -> { onDelete(); true }
+                SwipeToDismissBoxValue.StartToEnd -> { Repository.setSeen(current, !current.seen); false }
+                SwipeToDismissBoxValue.EndToStart -> { onReveal(); false }
                 else -> false
             }
         },
@@ -474,8 +749,11 @@ private fun SwipeableMessage(
     SwipeToDismissBox(
         state = state,
         modifier = modifier,
+        enableDismissFromStartToEnd = swipeEnabled,
+        enableDismissFromEndToStart = swipeEnabled,
         backgroundContent = {
             val dir = state.dismissDirection
+            val toStart = dir == SwipeToDismissBoxValue.EndToStart
             val color by animateColorAsState(
                 when (dir) {
                     SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.primary
@@ -483,21 +761,29 @@ private fun SwipeableMessage(
                     else -> Color.Transparent
                 }, label = "swipeBg",
             )
-            val iconScale by animateFloatAsState(if (state.progress > 0.3f) 1.2f else 0.9f, label = "swipeIcon")
-            Box(
+            val iconScale by animateFloatAsState(if (state.progress > 0.3f) 1.15f else 0.9f, label = "swipeIcon")
+            Row(
                 Modifier.fillMaxSize()
                     .clip(RoundedCornerShape(if (style == ListStyle.Cards) 24.dp else 16.dp))
-                    .background(color).padding(horizontal = 28.dp),
-                contentAlignment = if (dir == SwipeToDismissBoxValue.EndToStart) Alignment.CenterEnd else Alignment.CenterStart,
+                    .background(color).padding(horizontal = 24.dp)
+                    .alpha(if (dir == SwipeToDismissBoxValue.Settled) 0f else 1f),
+                horizontalArrangement = if (toStart) Arrangement.End else Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    when (dir) {
-                        SwipeToDismissBoxValue.EndToStart -> Icons.Outlined.Delete
-                        else -> if (m.seen) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead
-                    },
-                    null, tint = Color.White,
-                    modifier = Modifier.scale(iconScale).alpha(if (dir == SwipeToDismissBoxValue.Settled) 0f else 1f),
-                )
+                val (icon, label) = when {
+                    toStart -> Icons.Outlined.Delete to "Удалить или в спам"
+                    m.seen -> Icons.Outlined.MarkEmailUnread to "Непрочитанное"
+                    else -> Icons.Outlined.MarkEmailRead to "Прочитано"
+                }
+                if (toStart) {
+                    Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Icon(icon, null, tint = Color.White, modifier = Modifier.scale(iconScale))
+                if (!toStart) {
+                    Spacer(Modifier.width(10.dp))
+                    Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                }
             }
         },
     ) {
@@ -508,6 +794,8 @@ private fun SwipeableMessage(
             style = style,
             showPreview = showPreview,
             otp = otp,
+            selected = selected,
+            onTileClick = onSelect,
             modifier = Modifier.sharedCard(m.key),
             onClick = onOpen,
             onLongClick = onMove,

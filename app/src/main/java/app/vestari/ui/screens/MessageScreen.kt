@@ -79,7 +79,11 @@ fun MessageScreen(key: String) {
     val messagesMap by Repository.messages.collectAsState()
     val assignments by Repository.assignments.collectAsState()
     val categories by Repository.categories.collectAsState()
-    val m = remember(messagesMap, key) { messagesMap.values.asSequence().flatten().firstOrNull { it.key == key } }
+    val remoteMap by Repository.remote.collectAsState()
+    val m = remember(messagesMap, remoteMap, key) {
+        messagesMap.values.asSequence().flatten().firstOrNull { it.key == key }
+            ?: remoteMap.values.asSequence().flatten().firstOrNull { it.key == key }
+    }
 
     var body by remember { mutableStateOf<MailBody?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }

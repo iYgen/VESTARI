@@ -616,7 +616,7 @@ fun SmartScreen() {
                 ) { v -> Repository.updateSettings { it.copy(otpCodes = v) } }
                 SwitchRow(
                     "Тихие рассылки и скидки",
-                    "Без уведомлений и красных счётчиков — заглянете, когда будет время",
+                    "Без уведомлений — заглянете, когда будет время",
                     settings.quietPromos,
                 ) { v -> Repository.updateSettings { it.copy(quietPromos = v) } }
                 SwitchRow(
@@ -624,6 +624,24 @@ fun SmartScreen() {
                     "Рассылки и скидки не показываются во «Все», только в своих папках",
                     settings.cleanInbox,
                 ) { v -> Repository.updateSettings { it.copy(cleanInbox = v) } }
+                SwitchRow(
+                    "Сворачивать папки в строку",
+                    "Как в Mail.ru: во «Все» письма папки собраны в одну строку «Рассылки · New · Ozon, Сбер…» на месте самого свежего",
+                    settings.bundleFolders,
+                ) { v -> Repository.updateSettings { it.copy(bundleFolders = v) } }
+                AnimatedVisibility(settings.bundleFolders) {
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                        categories.forEach { c ->
+                            val on = c.id in settings.bundled
+                            app.vestari.ui.components.FolderChip(
+                                c.name, on, icon = app.vestari.ui.components.iconFor(c.icon),
+                            ) {
+                                Repository.updateSettings { s -> s.copy(bundled = if (on) s.bundled - c.id else s.bundled + c.id) }
+                            }
+                        }
+                    }
+                }
                 SwitchRow(
                     "Группировать по датам",
                     "Разделители «Сегодня», «Вчера», «На этой неделе»…",

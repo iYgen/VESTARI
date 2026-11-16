@@ -46,6 +46,7 @@ import app.vestari.ui.LocalToasts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -99,6 +100,10 @@ fun MessageCard(
     style: ListStyle = ListStyle.Cards,
     showPreview: Boolean = true,
     otp: String? = null,
+    /** Письмо выбрано (режим выделения): вместо иконки — галочка, фон подсвечен. */
+    selected: Boolean = false,
+    /** Нажатие на иконку письма — выделить его. null — иконка не нажимается. */
+    onTileClick: (() -> Unit)? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onStar: () -> Unit,
@@ -109,6 +114,7 @@ fun MessageCard(
     val base = if (style == ListStyle.List) Color.Transparent else extra.card
     val bg by animateColorAsState(
         when {
+            selected -> lerp(extra.card, primary, if (extra.isDark) 0.28f else 0.18f)
             !unread -> base
             style == ListStyle.List -> extra.accentSoft.copy(alpha = 0.55f)
             else -> lerp(extra.card, primary, if (extra.isDark) 0.10f else 0.06f)
@@ -136,7 +142,19 @@ fun MessageCard(
                 .padding(start = pad + 2.dp, end = pad - 4.dp, top = pad, bottom = pad),
             verticalAlignment = if (style == ListStyle.Cards) Alignment.Top else Alignment.CenterVertically,
         ) {
-            CategoryTile(category?.id, category?.let { iconFor(it.icon) }, m.senderTitle, tile)
+            Box(
+                if (onTileClick != null) Modifier.clip(RoundedCornerShape(16.dp)).bouncyClick(onClick = onTileClick) else Modifier,
+            ) {
+                CategoryTile(category?.id, category?.let { iconFor(it.icon) }, m.senderTitle, tile)
+                androidx.compose.animation.AnimatedVisibility(selected, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
+                    Box(
+                        Modifier.size(tile).clip(RoundedCornerShape(16.dp)).background(primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Check, "Выбрано", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(tile * 0.5f))
+                    }
+                }
+            }
             Spacer(Modifier.width(if (style == ListStyle.List) 10.dp else 14.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

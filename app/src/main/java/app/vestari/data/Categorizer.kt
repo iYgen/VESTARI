@@ -35,10 +35,10 @@ object Categorizer {
         "check.ofd", "lk.platformaofd.ru", "nalog-check",
     )
 
-    private val receiptWords = Regex("(?i)\\bчек\\b|кассов(ый|ого) чек|электронный чек|receipt|оплачен|заказ оплачен|фискальн|ОФД")
-    private val ticketWords = Regex("(?i)билет|посадочн|маршрутн(ая|ой) квитанц|бронирован|e-ticket|boarding pass|рейс\\b|электронн(ый|ого) билет")
-    private val salesWords = Regex("(?i)скидк|распродаж|промокод|акци[яи]|выгод|−\\d+%|-\\d+%|\\d+ ?%|sale\\b|кэшбэк|бонус")
-    private val govWords = Regex("(?i)госуслуг|налогов|ФНС|Социальн(ый|ого) фонд|Росреестр|ГИБДД|штраф")
+    private val receiptWords = Regex("\\bчек\\b|кассов(ый|ого) чек|электронный чек|receipt|оплачен|заказ оплачен|фискальн|ОФД", RegexOption.IGNORE_CASE)
+    private val ticketWords = Regex("билет|посадочн|маршрутн(ая|ой) квитанц|бронирован|e-ticket|boarding pass|рейс\\b|электронн(ый|ого) билет", RegexOption.IGNORE_CASE)
+    private val salesWords = Regex("скидк|распродаж|промокод|акци[яи]|выгод|−\\d+%|-\\d+%|\\d+ ?%|sale\\b|кэшбэк|бонус", RegexOption.IGNORE_CASE)
+    private val govWords = Regex("госуслуг|налогов|ФНС|Социальн(ый|ого) фонд|Росреестр|ГИБДД|штраф", RegexOption.IGNORE_CASE)
 
     fun categorize(m: MailMessage, ownEmails: Set<String>): String? {
         val from = m.fromEmail.lowercase()

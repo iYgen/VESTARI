@@ -14,7 +14,39 @@ data class Account(
     val smtpPort: Int,
     /** Индекс цвета аватарки в [app.vestari.ui.theme.AvatarColors]. */
     val color: Int = 0,
+    /** Подпись, которая добавляется в конец новых писем с этого ящика. */
+    val signature: String = "",
 )
+
+/** Файл, приложенный к черновику. Копия лежит во внутренней папке приложения ([path]). */
+@Serializable
+data class DraftAttachment(val name: String, val mime: String, val size: Long, val path: String)
+
+/**
+ * Черновик письма. Сохраняется автоматически во время набора.
+ * Если задан [sendAt] — это запланированное письмо, его отправит фоновая задача в указанное время.
+ */
+@Serializable
+data class Draft(
+    val id: String,
+    val accountId: String?,
+    val to: List<String> = emptyList(),
+    val cc: List<String> = emptyList(),
+    val bcc: List<String> = emptyList(),
+    val subject: String = "",
+    val body: String = "",
+    val attachments: List<DraftAttachment> = emptyList(),
+    val replyToKey: String? = null,
+    val inReplyTo: String? = null,
+    val updated: Long = 0L,
+    val sendAt: Long? = null,
+) {
+    val isEmpty: Boolean
+        get() = to.isEmpty() && cc.isEmpty() && bcc.isEmpty() && subject.isBlank() && body.isBlank() && attachments.isEmpty()
+}
+
+/** Адресат для подсказок в поле «Кому». */
+data class Contact(val email: String, val name: String, val score: Int)
 
 @Serializable
 data class MailMessage(
@@ -88,6 +120,10 @@ data class Settings(
     val quietPromos: Boolean = true,
     /** Во «Все» не показывать рассылки и скидки — они остаются в своих папках. */
     val cleanInbox: Boolean = false,
+    /** Во «Все» письма выбранных папок сворачиваются в одну строку («Рассылки · New · Ozon, Сбер…»). */
+    val bundleFolders: Boolean = true,
+    /** Какие папки сворачивать. По умолчанию — как в Mail.ru: рассылки, чеки, скидки, госписьма. */
+    val bundled: Set<String> = setOf("newsletters", "receipts", "sales", "gov"),
 )
 
 /**

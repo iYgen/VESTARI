@@ -7,7 +7,8 @@ import java.util.Locale
 object Smart {
 
     private val codeContext = Regex(
-        "(?i)(код|code|парол|password|otp|pin|подтвержд|verif|одноразов|проверочн|sms|смс|вход|login|sign.?in)",
+        "(код|code|парол|password|otp|pin|подтвержд|verif|одноразов|проверочн|sms|смс|вход|login|sign.?in)",
+        RegexOption.IGNORE_CASE,
     )
     private val candidate = Regex("(?<![\\d.,:/\\-+])(\\d{4,8}|\\d{3}[- ]\\d{3})(?![\\d,:/%₽$€]|[.]\\d)")
 

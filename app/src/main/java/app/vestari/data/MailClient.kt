@@ -24,8 +24,23 @@ import javax.mail.internet.MimeUtility
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Папка на сервере: полное имя (для IMAP) и имя для показа. */
-data class RemoteFolder(val fullName: String, val displayName: String, val isInbox: Boolean)
+/**
+ * Папка на сервере: полное имя (для IMAP), имя для показа, роль и разделитель вложенности.
+ * [role]: inbox, sent, drafts, spam, trash, archive или "" — обычная папка пользователя.
+ */
+@kotlinx.serialization.Serializable
+data class RemoteFolder(
+    val fullName: String,
+    val displayName: String,
+    val isInbox: Boolean,
+    val role: String = if (isInbox) "inbox" else "",
+    val separator: String = "/",
+) {
+    /** Служебные папки не скачиваем целиком — их можно открыть и посмотреть с сервера. */
+    val syncable: Boolean get() = role == "inbox" || role == ""
+    val parts: List<String> get() = if (separator.isEmpty()) listOf(fullName) else fullName.split(separator)
+    val parent: String? get() = parts.takeIf { it.size > 1 }?.dropLast(1)?.joinToString(separator)
+}
 
 /** Снимок папки: UIDVALIDITY и флаги (прочитано, важное) всех писем по UID — одна дешёвая команда. */
 data class FolderState(val uidValidity: Long, val flags: Map<Long, Pair<Boolean, Boolean>>)
@@ -79,24 +94,55 @@ object MailClient {
 
     // ---- синхронизация (вызывать на IO-потоке) ----
 
-    private val skipAttrs = setOf(
-        "\\noselect", "\\nonexistent", "\\sent", "\\drafts", "\\trash", "\\junk", "\\all", "\\important", "\\flagged",
+    /** Дубликаты писем (Gmail «Вся почта», «Помеченные») и папки-заглушки не показываем вовсе. */
+    private val hiddenAttrs = setOf("\\noselect", "\\nonexistent", "\\all", "\\important", "\\flagged")
+    private val roleByAttr = mapOf(
+        "\\sent" to "sent", "\\drafts" to "drafts", "\\junk" to "spam", "\\trash" to "trash", "\\archive" to "archive",
     )
-    private val skipNames = setOf(
-        "sent", "sent items", "sent messages", "отправленные", "drafts", "черновики", "spam", "junk", "спам",
-        "trash", "deleted", "deleted items", "deleted messages", "корзина", "удаленные", "удалённые",
-        "outbox", "исходящие", "[gmail]",
+    private val roleByName = mapOf(
+        "sent" to "sent", "sent items" to "sent", "sent messages" to "sent", "отправленные" to "sent",
+        "drafts" to "drafts", "черновики" to "drafts",
+        "spam" to "spam", "junk" to "spam", "спам" to "spam", "bulk mail" to "spam",
+        "trash" to "trash", "deleted" to "trash", "deleted items" to "trash", "deleted messages" to "trash",
+        "корзина" to "trash", "удаленные" to "trash", "удалённые" to "trash",
+        "archive" to "archive", "архив" to "archive",
+        "outbox" to "outbox", "исходящие" to "outbox",
+    )
+    val roleTitles = mapOf(
+        "inbox" to "Входящие", "sent" to "Отправленные", "drafts" to "Черновики", "spam" to "Спам",
+        "trash" to "Корзина", "archive" to "Архив", "outbox" to "Исходящие",
     )
 
-    /** Папки с письмами, кроме служебных (отправленные, черновики, спам, корзина). «Входящие» — первыми. */
-    fun listFolders(c: ImapConnection): List<RemoteFolder> = c.withStore { store ->
-        store.defaultFolder.list("*").filterIsInstance<IMAPFolder>().filter { f ->
+    /** Все папки ящика с ролями и вложенностью (для панели папок). «Входящие» — первыми. */
+    fun listAllFolders(c: ImapConnection): List<RemoteFolder> = c.withStore { store ->
+        store.defaultFolder.list("*").filterIsInstance<IMAPFolder>().mapNotNull { f ->
             val attrs = f.attributes.orEmpty().map { it.lowercase() }
-            attrs.none { it in skipAttrs } && f.name.lowercase() !in skipNames && f.fullName.lowercase() !in skipNames
-        }.map { f ->
+            if (attrs.any { it in hiddenAttrs } || f.name.equals("[Gmail]", true)) return@mapNotNull null
             val inbox = f.fullName.equals("INBOX", true)
-            RemoteFolder(f.fullName, if (inbox) "Входящие" else f.name, inbox)
+            val role = when {
+                inbox -> "inbox"
+                else -> attrs.firstNotNullOfOrNull { roleByAttr[it] } ?: roleByName[f.name.lowercase()] ?: ""
+            }
+            val sep = runCatching { f.separator.toString() }.getOrDefault("/")
+            // Служебные папки называем по-русски единообразно; папки пользователя — как в почте.
+            val title = if (role.isNotEmpty() && role != "archive") roleTitles.getValue(role) else f.name
+            RemoteFolder(f.fullName, title, inbox, role, sep)
         }.distinctBy { it.fullName }.sortedByDescending { it.isInbox }
+    }
+
+    /** Папки, письма которых скачиваются целиком: «Входящие» и папки пользователя. */
+    fun listFolders(c: ImapConnection): List<RemoteFolder> = listAllFolders(c).filter { it.syncable }
+
+    /** Сколько непрочитанных в папке — команда STATUS, саму папку не открываем. */
+    fun unreadCount(c: ImapConnection, folder: String): Int =
+        c.withStore { (it.getFolder(folder) as IMAPFolder).unreadMessageCount }
+
+    /** Последние письма папки с сервера, без сохранения (для служебных папок: отправленные, спам…). */
+    fun fetchLatest(c: ImapConnection, acc: Account, folder: String, skip: Int, count: Int): Pair<List<MailMessage>, Int> {
+        val uids = folderState(c, folder).flags.keys.sortedDescending()
+        val page = uids.drop(skip).take(count)
+        val list = fetchHeaders(c, acc, folder, page, previewCount = page.size).sortedByDescending { it.date }
+        return list to uids.size
     }
 
     fun folderState(c: ImapConnection, folder: String): FolderState = c.run(folder, Folder.READ_ONLY) { f ->
@@ -174,17 +220,50 @@ object MailClient {
         }
     }
 
+    /** Перенос в «Спам»: папка ищется по подсказке, атрибуту \Junk или по имени (Spam, Junk, Спам). */
+    suspend fun moveToSpam(acc: Account, password: String, folder: String, uid: Long, spamHint: String? = null) = withContext(Dispatchers.IO) {
+        once(acc, password, folder, Folder.READ_WRITE) { f ->
+            val m = f.getMessageByUID(uid) ?: return@once
+            val all = f.store.defaultFolder.list("*")
+            val spam = all.firstOrNull { it.fullName == spamHint } ?: all.firstOrNull { t ->
+                (t as? IMAPFolder)?.attributes?.any { it.equals("\\Junk", true) || it.equals("\\Spam", true) } == true ||
+                    t.name.lowercase() in setOf("spam", "junk", "спам", "junk e-mail", "нежелательная почта")
+            } ?: throw javax.mail.MessagingException("на сервере нет папки «Спам»")
+            if (spam.fullName != f.fullName) f.moveMessages(arrayOf(m), spam)
+        }
+    }
+
+    /** Файл для отправки: [file] — копия во внутренней папке приложения. */
+    data class OutgoingFile(val file: java.io.File, val name: String, val mime: String)
+
     suspend fun send(
         acc: Account, password: String,
         to: String, subject: String, text: String,
         inReplyTo: String? = null,
+        cc: String = "", bcc: String = "",
+        files: List<OutgoingFile> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         val s = session(acc)
+        fun parse(list: String) = InternetAddress.parse(list.replace(';', ','), false)
         val msg = MimeMessage(s).apply {
             setFrom(InternetAddress(acc.email, acc.name.ifBlank { null }, "UTF-8"))
-            setRecipients(Message.RecipientType.TO, InternetAddress.parse(to.replace(';', ','), false))
+            setRecipients(Message.RecipientType.TO, parse(to))
+            if (cc.isNotBlank()) setRecipients(Message.RecipientType.CC, parse(cc))
+            if (bcc.isNotBlank()) setRecipients(Message.RecipientType.BCC, parse(bcc))
             setSubject(subject, "UTF-8")
-            setText(text, "UTF-8")
+            if (files.isEmpty()) {
+                setText(text, "UTF-8")
+            } else {
+                val mp = javax.mail.internet.MimeMultipart("mixed")
+                mp.addBodyPart(MimeBodyPart().apply { setText(text, "UTF-8") })
+                files.forEach { f ->
+                    mp.addBodyPart(MimeBodyPart().apply {
+                        attachFile(f.file, f.mime, null)
+                        fileName = MimeUtility.encodeText(f.name, "UTF-8", null)
+                    })
+                }
+                setContent(mp)
+            }
             sentDate = Date()
             if (inReplyTo != null) {
                 setHeader("In-Reply-To", inReplyTo)

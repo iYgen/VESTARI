@@ -86,7 +86,9 @@ import kotlinx.coroutines.launch
 sealed interface Route {
     data object Main : Route
     data class Message(val key: String) : Route
-    data class Compose(val replyToKey: String? = null, val to: String = "") : Route
+    data class Compose(val replyToKey: String? = null, val to: String = "", val draftId: String? = null) : Route
+    data object Drafts : Route
+    data class ServerFolder(val accountId: String, val folder: String, val title: String) : Route
     data object AddAccount : Route
     data object Smart : Route
 }
@@ -106,6 +108,8 @@ class Nav {
     /** Выбранная папка на экране «Почта»: null — все письма. */
     var folder by mutableStateOf<String?>(null)
     var accountSheetOpen by mutableStateOf(false)
+    /** Панель папок ящика (открывается, если потянуть список вниз). */
+    var folderPanelOpen by mutableStateOf(false)
 
     val current: Route get() = stack.last()
     fun push(r: Route) { forward = true; stack.add(r) }
@@ -209,7 +213,9 @@ fun VestariApp(openMessageKey: String?, onOpenedFromNotification: () -> Unit) {
                             when (route) {
                                 Route.Main -> MainScreen()
                                 is Route.Message -> MessageScreen(route.key)
-                                is Route.Compose -> ComposeScreen(route.replyToKey, route.to)
+                                is Route.Compose -> ComposeScreen(route.replyToKey, route.to, route.draftId)
+                                Route.Drafts -> app.vestari.ui.screens.DraftsScreen()
+                                is Route.ServerFolder -> app.vestari.ui.screens.ServerFolderScreen(route.accountId, route.folder, route.title)
                                 Route.AddAccount -> AddAccountScreen()
                                 Route.Smart -> app.vestari.ui.screens.SmartScreen()
                             }

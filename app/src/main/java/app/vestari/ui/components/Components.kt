@@ -191,9 +191,20 @@ fun StarButton(active: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Чип папки с плавной сменой цвета и счётчиком непрочитанных. */
+/**
+ * Чип папки с иконкой. Есть непрочитанные — название жирное и счётчик в скобках: «Чеки (3)»;
+ * всё прочитано — обычный шрифт без счётчика.
+ */
 @Composable
-fun FolderChip(text: String, selected: Boolean, badge: Int = 0, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+fun FolderChip(
+    text: String,
+    selected: Boolean,
+    badge: Int = 0,
+    icon: ImageVector? = null,
+    iconTint: Color? = null,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val bg by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.primary else AppTheme.extra.card.copy(alpha = if (AppTheme.extra.isDark) 1f else 0.85f),
         spring(stiffness = Spring.StiffnessMediumLow), label = "chipBg",
@@ -201,28 +212,24 @@ fun FolderChip(text: String, selected: Boolean, badge: Int = 0, onLongClick: (()
     val fg by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, label = "chipFg",
     )
-    Box {
-        Box(
-            Modifier
-                .padding(top = 6.dp, end = 4.dp)
-                .clip(RoundedCornerShape(50))
-                .background(bg)
-                .bouncyClick(onLongClick = onLongClick, onClick = onClick)
-                .padding(horizontal = 18.dp, vertical = 10.dp),
-        ) {
-            Text(text, color = fg, style = MaterialTheme.typography.labelLarge)
+    Row(
+        Modifier
+            .padding(top = 6.dp, end = 4.dp)
+            .clip(RoundedCornerShape(50))
+            .background(bg)
+            .bouncyClick(onLongClick = onLongClick, onClick = onClick)
+            .padding(start = if (icon != null) 12.dp else 16.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            Icon(icon, null, tint = if (selected) fg else iconTint ?: MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
         }
-        AnimatedVisibility(
-            badge > 0, modifier = Modifier.align(Alignment.TopEnd).offset(x = 0.dp, y = (-2).dp),
-            enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)) + fadeIn(), exit = scaleOut() + fadeOut(),
-        ) {
-            Box(
-                Modifier.clip(RoundedCornerShape(50)).background(AppTheme.extra.unreadDot)
-                    .padding(horizontal = 6.dp, vertical = 1.dp),
-            ) {
-                Text(if (badge > 99) "99+" else badge.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-        }
+        Text(
+            if (badge > 0) "$text (${if (badge > 999) "999+" else badge})" else text,
+            color = fg, style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (badge > 0) FontWeight.Bold else FontWeight.Normal,
+        )
     }
 }
 

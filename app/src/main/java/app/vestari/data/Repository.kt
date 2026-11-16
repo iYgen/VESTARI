@@ -70,6 +70,41 @@ object Repository {
     private val _rules = MutableStateFlow<List<SenderRule>>(emptyList())
     val rules: StateFlow<List<SenderRule>> = _rules.asStateFlow()
 
+    /** Ящик → все папки на сервере (с ролями и вложенностью) — для панели папок. */
+    private val _serverFolders = MutableStateFlow<Map<String, List<RemoteFolder>>>(emptyMap())
+    val serverFolders: StateFlow<Map<String, List<RemoteFolder>>> = _serverFolders.asStateFlow()
+
+    /** Ящик → непрочитанные в служебных папках, которые не скачиваются целиком. */
+    private val _remoteUnread = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
+    val remoteUnread: StateFlow<Map<String, Map<String, Int>>> = _remoteUnread.asStateFlow()
+
+    /** Письма служебных папок, открытых для просмотра: «ящик|папка» → письма. В файлы не пишутся. */
+    private val _remote = MutableStateFlow<Map<String, List<MailMessage>>>(emptyMap())
+    val remote: StateFlow<Map<String, List<MailMessage>>> = _remote.asStateFlow()
+    private val remoteTotals = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Догружает очередную страницу писем папки с сервера (сначала новые).
+     * Возвращает true, если на сервере есть ещё письма.
+     */
+    suspend fun loadRemoteFolder(accountId: String, folder: String, reset: Boolean = false): Boolean =
+        withContext(Dispatchers.IO) {
+            val acc = account(accountId) ?: return@withContext false
+            val key = "$accountId|$folder"
+            val have = if (reset) 0 else _remote.value[key]?.size ?: 0
+            val (page, total) = ImapConnection(acc, password(acc)).use { c ->
+                MailClient.fetchLatest(c, acc, folder, have, if (have == 0) 40 else 60)
+            }
+            remoteTotals[key] = total
+            _remote.update { map ->
+                val list = (if (reset) emptyList() else map[key].orEmpty()) + page
+                map + (key to list.distinctBy { it.key }.sortedByDescending { it.date })
+            }
+            (_remote.value[key]?.size ?: 0) < total
+        }
+
+    fun remoteTotal(accountId: String, folder: String) = remoteTotals["$accountId|$folder"]
+
     /** Ящик → (папка на сервере → папка приложения). Нужно, чтобы перераспределять без сети. */
     private val folderCats = ConcurrentHashMap<String, Map<String, String?>>()
 
@@ -85,6 +120,8 @@ object Repository {
             _settings.value = read("settings.json") ?: Settings()
             _messages.value = _accounts.value.associate { it.id to (read<List<MailMessage>>("messages_${it.id}.json") ?: emptyList()) }
             _rules.value = read("rules.json") ?: emptyList()
+            _drafts.value = read("drafts.json") ?: emptyList()
+            _serverFolders.value = read("server_folders.json") ?: emptyMap()
             read<Map<String, Map<String, String?>>>("folder_map.json")?.let { folderCats.putAll(it) }
             ready = true
         }
@@ -263,6 +300,7 @@ object Repository {
         backfills.remove(id)?.cancel()
         pending.remove(id)
         _progress.update { it - id }
+        _serverFolders.update { it - id }
         _accounts.update { list -> list.filterNot { it.id == id } }
         _messages.update { it - id }
         secrets.remove(id)
@@ -332,7 +370,14 @@ object Repository {
         val newestBefore = before.maxOfOrNull { it.date } ?: 0L
 
         ImapConnection(acc, password(acc)).use { c ->
-            val folders = MailClient.listFolders(c)
+            val allFolders = MailClient.listAllFolders(c)
+            val folders = allFolders.filter { it.syncable }
+            // Для панели папок: всё дерево ящика и непрочитанные в служебных папках (спам, архив).
+            val unread = allFolders.filter { it.role == "spam" || it.role == "archive" }
+                .associate { f -> f.fullName to runCatching { MailClient.unreadCount(c, f.fullName) }.getOrDefault(0) }
+            _serverFolders.update { it + (acc.id to allFolders) }
+            _remoteUnread.update { it + (acc.id to unread) }
+            persist("server_folders.json", _serverFolders.value)
             val catByFolder = folders.associate {
                 it.fullName to (if (_settings.value.serverFolders) categoryForServerFolder(it) else null)
             }
@@ -469,6 +514,7 @@ object Repository {
 
     fun find(key: String): MailMessage? =
         _messages.value.values.asSequence().flatten().firstOrNull { it.key == key }
+            ?: _remote.value.values.asSequence().flatten().firstOrNull { it.key == key }
 
     suspend fun loadBody(m: MailMessage): MailBody {
         val acc = account(m.accountId) ?: throw IllegalStateException("Ящик удалён")
@@ -504,9 +550,143 @@ object Repository {
         remote(m) { acc, pass -> MailClient.delete(acc, pass, m.folder, m.uid) }
     }
 
+    /** «В спам» с отменой: как удаление — письмо прячется сразу, на сервер уходит здесь. */
+    fun commitSpam(m: MailMessage) {
+        persistMessages(m.accountId)
+        val hint = _serverFolders.value[m.accountId]?.firstOrNull { it.role == "spam" }?.fullName
+        remote(m) { acc, pass -> MailClient.moveToSpam(acc, pass, m.folder, m.uid, hint) }
+    }
+
+    /** Отметить сразу много писем прочитанными или непрочитанными. */
+    fun setSeenAll(list: List<MailMessage>, seen: Boolean) {
+        val changed = list.filter { it.seen != seen }
+        if (changed.isEmpty()) return
+        val keys = changed.map { it.key }.toSet()
+        _messages.update { map -> map.mapValues { (_, l) -> l.map { if (it.key in keys) it.copy(seen = seen) else it } } }
+        changed.map { it.accountId }.distinct().forEach { persistMessages(it) }
+        changed.forEach { m -> remote(m) { acc, pass -> MailClient.setFlag(acc, pass, m.folder, m.uid, Flags.Flag.SEEN, seen) } }
+    }
+
+    /** Спрятать сразу несколько писем (удаление или спам с возможностью отмены). */
+    fun hideAll(list: List<MailMessage>) {
+        val keys = list.map { it.key }.toSet()
+        _messages.update { map -> map.mapValues { (_, l) -> l.filterNot { it.key in keys } } }
+    }
+
+    fun unhideAll(list: List<MailMessage>) = list.forEach { unhide(it) }
+
     suspend fun send(accountId: String, to: String, subject: String, text: String, inReplyTo: String?) {
         val acc = account(accountId) ?: throw IllegalStateException("Выберите ящик")
         MailClient.send(acc, password(acc), to, subject, text, inReplyTo)
+    }
+
+    fun updateAccount(acc: Account) {
+        _accounts.update { list -> list.map { if (it.id == acc.id) acc else it } }
+        persist("accounts.json", _accounts.value)
+    }
+
+    // ---------- черновики, вложения, отправка ----------
+
+    private val _drafts = MutableStateFlow<List<Draft>>(emptyList())
+    val drafts: StateFlow<List<Draft>> = _drafts.asStateFlow()
+
+    private fun draftDir(id: String) = File(dir.parentFile, "drafts/$id")
+
+    /** Сохраняет черновик (или удаляет, если он пустой). Вызывается часто — во время набора. */
+    fun saveDraft(d: Draft) {
+        if (d.isEmpty) return deleteDraft(d.id)
+        val stamped = d.copy(updated = System.currentTimeMillis())
+        _drafts.update { list -> listOf(stamped) + list.filterNot { it.id == d.id } }
+        persist("drafts.json", _drafts.value)
+    }
+
+    fun draft(id: String) = _drafts.value.firstOrNull { it.id == id }
+
+    fun deleteDraft(id: String) {
+        if (_drafts.value.none { it.id == id }) {
+            io.launch { draftDir(id).deleteRecursively() }
+            return
+        }
+        _drafts.update { list -> list.filterNot { it.id == id } }
+        persist("drafts.json", _drafts.value)
+        io.launch { draftDir(id).deleteRecursively() }
+    }
+
+    /** Копирует выбранный файл во внутреннюю папку черновика: так он не пропадёт, даже если исходник удалят. */
+    suspend fun importAttachment(context: Context, draftId: String, uri: android.net.Uri): DraftAttachment =
+        withContext(Dispatchers.IO) {
+            val cr = context.contentResolver
+            var name = "file"
+            var size = -1L
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) ?: name }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = c.getLong(it) }
+                }
+            }
+            val mime = cr.getType(uri) ?: "application/octet-stream"
+            val target = File(draftDir(draftId).apply { mkdirs() }, "${System.nanoTime()}_${name.replace('/', '_')}")
+            cr.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
+                ?: throw IllegalStateException("Не удалось открыть файл")
+            DraftAttachment(name, mime, if (size >= 0) size else target.length(), target.absolutePath)
+        }
+
+    /** Отправляет черновик; при успехе удаляет его. Подпись ящика добавляется к тексту. */
+    suspend fun sendDraft(d: Draft) {
+        val acc = d.accountId?.let(::account) ?: throw IllegalStateException("Выберите ящик")
+        require(d.to.isNotEmpty() || d.cc.isNotEmpty() || d.bcc.isNotEmpty()) { "Укажите адресата" }
+        val text = if (acc.signature.isBlank()) d.body else d.body.trimEnd() + "\n\n--\n" + acc.signature.trim()
+        MailClient.send(
+            acc, password(acc),
+            to = d.to.joinToString(", "), cc = d.cc.joinToString(", "), bcc = d.bcc.joinToString(", "),
+            subject = d.subject, text = text, inReplyTo = d.inReplyTo,
+            files = d.attachments.map { MailClient.OutgoingFile(File(it.path), it.name, it.mime) },
+        )
+        deleteDraft(d.id)
+    }
+
+    /** Отправка в фоне приложения: не прервётся, даже если экран письма закрыть. Ответ — на главном потоке. */
+    fun sendInBackground(d: Draft, onDone: (Throwable?) -> Unit) {
+        io.launch {
+            val error = runCatching { sendDraft(d) }.exceptionOrNull()?.let { e ->
+                if (e is javax.mail.AuthenticationFailedException) IllegalStateException("почта не приняла пароль") else e
+            }
+            withContext(Dispatchers.Main) { onDone(error) }
+        }
+    }
+
+    /** Отложенная отправка: черновик помечается временем, фоновая задача отправит его сама. */
+    fun scheduleDraft(context: Context, d: Draft, at: Long) {
+        saveDraft(d.copy(sendAt = at))
+        app.vestari.sync.ScheduledSendWorker.schedule(context, d.id, at)
+    }
+
+    fun cancelSchedule(context: Context, id: String) {
+        draft(id)?.let { saveDraft(it.copy(sendAt = null)) }
+        app.vestari.sync.ScheduledSendWorker.cancel(context, id)
+    }
+
+    /**
+     * Подсказки адресов: отправители скачанных писем и адресаты своих писем.
+     * Чем чаще человек встречается в почте, тем выше он в списке.
+     */
+    fun contacts(): List<Contact> {
+        val own = ownEmails()
+        val byEmail = HashMap<String, Contact>()
+        fun add(email: String, name: String, w: Int) {
+            val e = email.trim().lowercase()
+            if (!e.contains('@') || e in own || e.startsWith("noreply") || e.startsWith("no-reply")) return
+            val prev = byEmail[e]
+            byEmail[e] = Contact(e, prev?.name?.ifBlank { null } ?: name, (prev?.score ?: 0) + w)
+        }
+        _messages.value.values.forEach { list ->
+            list.forEach { m ->
+                add(m.fromEmail, m.fromName, if (m.listUnsubscribe) 1 else 3)
+                if (m.fromEmail.lowercase() in own) m.to.split(',').forEach { add(it, "", 5) }
+            }
+        }
+        _drafts.value.forEach { d -> (d.to + d.cc).forEach { add(it, "", 2) } }
+        return byEmail.values.sortedByDescending { it.score }
     }
 
     private fun remote(m: MailMessage, block: suspend (Account, String) -> Unit) {
