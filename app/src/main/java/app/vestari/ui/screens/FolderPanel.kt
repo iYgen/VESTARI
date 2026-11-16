@@ -76,6 +76,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.vestari.data.Account
 import app.vestari.data.Category
+import app.vestari.data.categoryTree
+import app.vestari.data.childrenOf
+import app.vestari.data.subtreeIds
+import app.vestari.data.pathTo
+import app.vestari.data.isTopLevel
 import app.vestari.data.MailMessage
 import app.vestari.data.RemoteFolder
 import app.vestari.data.Repository
@@ -140,6 +145,70 @@ fun BundleRow(b: Bundle, modifier: Modifier = Modifier, onClick: () -> Unit) {
                 )
             }
             Icon(Icons.Rounded.KeyboardArrowRight, null, tint = AppTheme.extra.muted, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Подпапка внутри открытой папки: значок, название (жирное, если есть непрочитанные), число писем, «›». */
+@Composable
+fun SubfolderRow(
+    icon: ImageVector,
+    tint: Color,
+    name: String,
+    unread: Int,
+    total: Int?,
+    hasChildren: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = AppTheme.extra.card.copy(alpha = if (AppTheme.extra.isDark) 1f else 0.7f),
+        modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick),
+    ) {
+        Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (unread > 0) "$name (${if (unread > 999) "999+" else unread})" else name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (unread > 0) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            if (hasChildren) {
+                Icon(Icons.Outlined.Folder, "Есть подпапки", tint = AppTheme.extra.muted, modifier = Modifier.padding(start = 6.dp).size(16.dp))
+            }
+            if (total != null && total > 0) {
+                Text(total.toString(), style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(start = 8.dp))
+            }
+            Icon(Icons.Rounded.KeyboardArrowRight, null, tint = AppTheme.extra.muted, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Путь к вложенной папке: «Работа › Проекты › 2024». Нажатие на звено — переход в эту папку. */
+@Composable
+fun FolderPath(path: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
+    if (path.size < 2) return
+    androidx.compose.foundation.lazy.LazyRow(
+        modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        path.forEachIndexed { i, (name, go) ->
+            item(key = "p$i") {
+                val last = i == path.lastIndex
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (last) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                        fontWeight = if (last) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !last, onClick = go)
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                    if (!last) Icon(Icons.Rounded.KeyboardArrowRight, null, tint = AppTheme.extra.muted, modifier = Modifier.size(16.dp))
+                }
+            }
         }
     }
 }
@@ -288,13 +357,20 @@ fun FolderPanel(onDismiss: () -> Unit) {
                 FolderLine(Icons.Outlined.Drafts, "Черновики Vestari", 0, unread = 0, total = drafts.size,
                     onClick = { onDismiss(); nav.push(Route.Drafts) })
             }
-            items(categories, key = { "v_${it.id}" }) { c ->
+            // Папки Vestari — деревом, с подпапками на любую глубину.
+            val vCollapsed = collapsed.filter { it.value && it.key.startsWith("v:") }.keys.map { it.removePrefix("v:") }.toSet()
+            items(categoryTree(categories, vCollapsed), key = { "v_${it.category.id}" }) { node ->
+                val c = node.category
                 val list = all.filter { categoryOf(it, assignments) == c.id }
                 FolderLine(
-                    iconFor(c.icon), c.name, 0,
+                    iconFor(c.icon), c.name, node.depth,
                     unread = list.count { !it.seen },
                     total = list.size, tileId = c.id,
+                    expandable = node.hasChildren,
+                    expanded = collapsed["v:" + c.id] != true,
+                    onToggle = { collapsed["v:" + c.id] = collapsed["v:" + c.id] != true },
                     onClick = { onDismiss(); nav.folder = c.id; nav.tab = Tab.Mail },
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -420,7 +496,33 @@ fun ServerFolderScreen(accountId: String, folder: String, title: String) {
                         }
                     }
                 }
-                if (!loading && error == null && list.isEmpty()) item {
+                // Путь «Входящие › Работа › Проекты» — по нему можно подняться на любой уровень.
+                val folders = serverFolders[accountId].orEmpty()
+                info?.let { f ->
+                    val chain = f.parts.indices.map { i -> f.parts.take(i + 1).joinToString(f.separator) }
+                        .mapNotNull { full -> folders.firstOrNull { it.fullName == full } }
+                    if (chain.size > 1) item(key = "path") {
+                        FolderPath(chain.map { p ->
+                            p.displayName to {
+                                nav.pop()
+                                if (p.isInbox) { nav.folder = null; nav.tab = Tab.Mail }
+                                else nav.push(Route.ServerFolder(accountId, p.fullName, p.displayName))
+                            }
+                        })
+                    }
+                }
+                // Подпапки — над письмами, любой глубины: внутри каждой снова видны её подпапки.
+                val subs = folders.filter { it.parent == folder }.sortedBy { it.displayName.lowercase() }
+                items(subs, key = { "sub_" + it.fullName }) { s ->
+                    val unread = messagesMap[accountId].orEmpty().count { it.folder == s.fullName && !it.seen }
+                    SubfolderRow(
+                        roleIcon(s.role), MaterialTheme.colorScheme.primary, s.displayName,
+                        unread = unread, total = if (s.syncable) messagesMap[accountId].orEmpty().count { it.folder == s.fullName } else null,
+                        hasChildren = folders.any { it.parent == s.fullName },
+                        modifier = Modifier.animateItem(),
+                    ) { nav.push(Route.ServerFolder(accountId, s.fullName, s.displayName)) }
+                }
+                if (!loading && error == null && list.isEmpty() && subs.isEmpty()) item {
                     Text("Писем нет", color = AppTheme.extra.muted, modifier = Modifier.fillMaxWidth().padding(top = 48.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
                 items(list, key = { it.key }) { m ->

@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -64,6 +65,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import app.vestari.data.Account
 import app.vestari.data.Category
+import app.vestari.data.categoryTree
+import app.vestari.data.childrenOf
+import app.vestari.data.subtreeIds
+import app.vestari.data.pathTo
+import app.vestari.data.isTopLevel
 import app.vestari.data.MailMessage
 import app.vestari.data.Repository
 import app.vestari.ui.LocalNav
@@ -297,8 +303,14 @@ fun MoveToFolderSheet(message: MailMessage, onDismiss: () -> Unit) {
             SectionTitle("Переместить в папку")
             Text(message.subject, style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.muted, maxLines = 1)
             Spacer(Modifier.height(8.dp))
-            categories.forEach { c ->
-                SoftRow(iconFor(c.icon), c.name, trailing = { if (c.id == current) RadioCheck(true) }) { pick(c.id, c.name) }
+            // Папки деревом: подпапки с отступом под родителем.
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                categoryTree(categories).forEach { node ->
+                    val c = node.category
+                    Box(Modifier.padding(start = (node.depth * 20).dp)) {
+                        SoftRow(iconFor(c.icon), c.name, trailing = { if (c.id == current) RadioCheck(true) }) { pick(c.id, c.name) }
+                    }
+                }
             }
             SoftRow(Icons.Outlined.FolderOff, "Без папки", trailing = { if (current == null) RadioCheck(true) }) { pick(null, "") }
             SoftRow(Icons.Rounded.Add, "Новая папка", tint = MaterialTheme.colorScheme.primary) { creating = true }

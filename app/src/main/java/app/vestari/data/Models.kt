@@ -78,7 +78,58 @@ data class Category(
     val builtin: Boolean = false,
     /** Папка пришла с сервера (создана в самой почте, например в Mail.ru). */
     val remote: Boolean = false,
+    /** Родительская папка (id) — папки могут быть вложены на любую глубину. */
+    val parent: String? = null,
 )
+
+/** Строка дерева папок: папка, глубина вложенности и есть ли у неё подпапки. */
+data class CategoryNode(val category: Category, val depth: Int, val hasChildren: Boolean)
+
+/**
+ * Дерево папок в порядке пользователя: каждая папка, затем её подпапки (с отступом), на любую глубину.
+ * Папка с несуществующим родителем считается верхней. Свёрнутые ветки ([collapsed]) пропускаются.
+ */
+fun categoryTree(cats: List<Category>, collapsed: Set<String> = emptySet()): List<CategoryNode> {
+    val ids = cats.map { it.id }.toSet()
+    val byParent = cats.groupBy { c -> c.parent?.takeIf { it in ids && it != c.id } }
+    val out = mutableListOf<CategoryNode>()
+    val seen = mutableSetOf<String>()
+    fun walk(c: Category, depth: Int) {
+        if (!seen.add(c.id)) return
+        val kids = byParent[c.id].orEmpty()
+        out += CategoryNode(c, depth, kids.isNotEmpty())
+        if (c.id !in collapsed) kids.forEach { walk(it, depth + 1) }
+    }
+    byParent[null].orEmpty().forEach { walk(it, 0) }
+    return out
+}
+
+/** Подпапки первого уровня. */
+fun List<Category>.childrenOf(id: String?): List<Category> = filter { it.parent == id && it.id != id }
+
+/** Папка и все её подпапки на любую глубину. */
+fun List<Category>.subtreeIds(id: String): Set<String> {
+    val out = mutableSetOf(id)
+    var frontier = setOf(id)
+    while (frontier.isNotEmpty()) {
+        frontier = filter { it.parent in frontier && out.add(it.id) }.map { it.id }.toSet()
+    }
+    return out
+}
+
+/** Верхняя папка (без родителя) или папка, чей родитель удалён. */
+fun List<Category>.isTopLevel(c: Category): Boolean = c.parent == null || none { it.id == c.parent }
+
+/** Цепочка от верхней папки до [id] включительно: «Работа › Проекты › 2024». */
+fun List<Category>.pathTo(id: String?): List<Category> {
+    val byId = associateBy { it.id }
+    val out = ArrayList<Category>()
+    var cur = id?.let { byId[it] }
+    while (cur != null && out.none { it.id == cur!!.id }) {
+        out.add(0, cur); cur = cur.parent?.let { byId[it] }
+    }
+    return out
+}
 
 /** Вид списка писем. */
 enum class ListStyle(val title: String, val hint: String) {

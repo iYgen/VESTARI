@@ -64,6 +64,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.vestari.data.Account
 import app.vestari.data.Category
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import app.vestari.data.categoryTree
+import app.vestari.data.childrenOf
+import app.vestari.data.subtreeIds
+import app.vestari.data.pathTo
+import app.vestari.data.isTopLevel
 import app.vestari.data.Providers
 import app.vestari.data.Repository
 import app.vestari.ui.LocalNav
@@ -125,6 +131,7 @@ fun FoldersScreen() {
     var editing by remember { mutableStateOf<Category?>(null) }
     var actionsFor by remember { mutableStateOf<Category?>(null) }
     var creating by remember { mutableStateOf(false) }
+    val collapsed = remember { androidx.compose.runtime.mutableStateListOf<String>() }
 
     val all = remember(messagesMap) { messagesMap.values.flatten() }
     val stats = remember(all, assignments) {
@@ -142,12 +149,18 @@ fun FoldersScreen() {
                 nav.folder = null; nav.tab = Tab.Mail
             }
         }
-        items(categories, key = { it.id }) { c ->
+        // Папки деревом: подпапки — с отступом под родителем, ветки сворачиваются стрелкой.
+        items(categoryTree(categories, collapsed.toSet()), key = { it.category.id }) { node ->
+            val c = node.category
             val (total, unread) = stats[c.id] ?: (0 to 0)
             FolderCard(
                 c.id, c.name, iconFor(c.icon), total, unread,
-                modifier = Modifier.animateItem(),
+                modifier = Modifier.animateItem().padding(start = (node.depth * 20).dp),
                 onLongClick = { actionsFor = c },
+                compact = node.depth > 0,
+                expandable = node.hasChildren,
+                expanded = c.id !in collapsed,
+                onToggle = { if (!collapsed.remove(c.id)) collapsed.add(c.id) },
             ) { nav.folder = c.id; nav.tab = Tab.Mail }
         }
         item {
@@ -200,14 +213,18 @@ private fun FolderCard(
     total: Int, unread: Int,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    compact: Boolean = false,
+    expandable: Boolean = false,
+    expanded: Boolean = true,
+    onToggle: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp), color = AppTheme.extra.card,
         modifier = modifier.fillMaxWidth().bouncyClick(onLongClick = onLongClick, onClick = onClick),
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            CategoryTile(id, icon, name, 46.dp)
+        Row(Modifier.padding(if (compact) 10.dp else 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            CategoryTile(id, icon, name, if (compact) 36.dp else 46.dp)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.titleMedium)
@@ -218,6 +235,14 @@ private fun FolderCard(
                     Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.primary)
                         .padding(horizontal = 10.dp, vertical = 3.dp),
                 ) { Text(unread.toString(), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium) }
+            }
+            if (expandable) {
+                IconButton(onClick = onToggle, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        if (expanded) "Свернуть подпапки" else "Показать подпапки", tint = AppTheme.extra.muted,
+                    )
+                }
             }
         }
     }
@@ -657,9 +682,10 @@ private fun RuleDialog(categories: List<Category>, onDismiss: () -> Unit, onSave
                 Spacer(Modifier.height(12.dp))
                 Text("Класть в папку", style = MaterialTheme.typography.labelLarge)
                 Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
-                    categories.forEach { c ->
+                    categoryTree(categories).forEach { node ->
+                        val c = node.category
                         Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { selected = c.id }.padding(vertical = 6.dp),
+                            Modifier.fillMaxWidth().padding(start = (node.depth * 18).dp).clip(RoundedCornerShape(12.dp)).clickable { selected = c.id }.padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(selected == c.id, { selected = c.id })

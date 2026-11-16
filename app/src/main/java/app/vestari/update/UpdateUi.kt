@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,12 +40,15 @@ import androidx.compose.ui.unit.dp
 import app.vestari.ui.theme.AppTheme
 import kotlinx.coroutines.launch
 
+/** Обновление запустили из настроек — весь процесс виден там, всплывающее окно не показываем. */
+private var startedFromSettings by androidx.compose.runtime.mutableStateOf(false)
+
 /** Всплывающая карточка «Доступна новая версия» над нижним меню. */
 @Composable
 fun UpdateBanner(modifier: Modifier = Modifier) {
     val state by Updater.state.collectAsState()
-    val visible = state is Updater.State.Available || state is Updater.State.Downloading || state is Updater.State.Ready ||
-        (state as? Updater.State.Failed)?.message?.startsWith("Загрузка") == true
+    val visible = !startedFromSettings && (state is Updater.State.Available || state is Updater.State.Downloading || state is Updater.State.Ready ||
+        (state as? Updater.State.Failed)?.message?.startsWith("Загрузка") == true)
     AnimatedVisibility(
         visible, modifier = modifier,
         enter = slideInVertically(spring(dampingRatio = 0.8f)) { it } + fadeIn(),
@@ -111,7 +115,7 @@ private fun UpdateContent(state: Updater.State, compact: Boolean) {
         Spacer(Modifier.height(12.dp))
         when (state) {
             is Updater.State.Available -> Button(
-                onClick = { Updater.startDownload(context, state.release) },
+                onClick = { if (!compact) startedFromSettings = true; Updater.startDownload(context, state.release) },
                 shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
             ) { Text("Скачать обновление") }
             is Updater.State.Ready -> Button(

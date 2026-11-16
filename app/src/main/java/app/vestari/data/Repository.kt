@@ -258,13 +258,29 @@ object Repository {
      * Папка, созданная в самой почте (например, в Mail.ru), становится папкой Vestari с тем же именем.
      * Если такая уже есть (в том числе встроенная — «Рассылки», «Чеки»), письма идут в неё.
      */
-    private fun categoryForServerFolder(f: RemoteFolder): String? {
-        if (f.isInbox) return null
+    private fun categoryForServerFolder(f: RemoteFolder, all: List<RemoteFolder>, depth: Int = 0): String? {
+        if (f.isInbox || depth > 16) return null
         val name = f.displayName.trim()
         if (name.isEmpty() || name.lowercase() in _settings.value.ignoredFolders) return null
-        _categories.value.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.id }
-        val c = Category("f_" + Integer.toHexString(name.lowercase().hashCode()), name, "folder", remote = true)
-        _categories.update { list -> if (list.any { it.id == c.id }) list else list + c }
+        // Вложенная папка ящика («Работа/Проекты») становится вложенной и в Vestari.
+        val parentId = f.parent
+            ?.let { p -> all.firstOrNull { it.fullName == p } }
+            ?.takeIf { !it.isInbox && it.role.isEmpty() }
+            ?.let { categoryForServerFolder(it, all, depth + 1) }
+        if (parentId == null) {
+            _categories.value.firstOrNull { it.name.equals(name, ignoreCase = true) && it.parent == null }?.let { return it.id }
+        }
+        // Одинаковые имена в разных ветках («Работа/2024» и «Дом/2024») — разные папки.
+        val key = if (parentId == null) name.lowercase() else "$parentId/${name.lowercase()}"
+        val c = Category("f_" + Integer.toHexString(key.hashCode()), name, "folder", remote = true, parent = parentId)
+        _categories.update { list ->
+            val i = list.indexOfFirst { it.id == c.id }
+            when {
+                i < 0 -> list + c
+                list[i].parent != parentId -> list.toMutableList().also { it[i] = it[i].copy(parent = parentId) }
+                else -> list
+            }
+        }
         persist("categories.json", _categories.value)
         return c.id
     }
@@ -384,10 +400,19 @@ object Repository {
             _remoteUnread.update { it + (acc.id to unread) }
             persist("server_folders.json", _serverFolders.value)
             val catByFolder = folders.associate {
-                it.fullName to (if (_settings.value.serverFolders) categoryForServerFolder(it) else null)
+                it.fullName to (if (_settings.value.serverFolders) categoryForServerFolder(it, allFolders) else null)
             }
             folderCats[acc.id] = catByFolder
             persist("folder_map.json", HashMap(folderCats))
+            // Папки с сервера, которых больше нет ни в одном ящике (переименованы, перенесены в другую ветку), убираем,
+            // если вручную в них ничего не переносили.
+            if (_settings.value.serverFolders) {
+                val used = folderCats.values.flatMap { it.values }.filterNotNull().toSet() + _assignments.value.values.toSet()
+                _categories.update { list ->
+                    list.filter { !it.remote || it.id in used }.map { c -> if (c.parent != null && list.none { it.id == c.parent }) c.copy(parent = null) else c }
+                }
+                persist("categories.json", _categories.value)
+            }
             val states = folders.associate { it.fullName to MailClient.folderState(c, it.fullName) }
 
             // Удалённые на сервере письма убираем, флаги (прочитано, важное) обновляем у всех.

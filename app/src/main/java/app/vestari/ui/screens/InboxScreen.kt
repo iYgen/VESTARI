@@ -124,6 +124,11 @@ import androidx.compose.ui.unit.dp
 import app.vestari.R
 import app.vestari.data.Categorizer
 import app.vestari.data.Category
+import app.vestari.data.categoryTree
+import app.vestari.data.childrenOf
+import app.vestari.data.subtreeIds
+import app.vestari.data.pathTo
+import app.vestari.data.isTopLevel
 import app.vestari.data.ListStyle
 import app.vestari.data.MailMessage
 import app.vestari.data.Repository
@@ -290,6 +295,16 @@ fun InboxScreen() {
     val unreadByCat = remember(all, assignments) {
         all.filter { !it.seen }.groupingBy { categoryOf(it, assignments) }.eachCount()
     }
+    val totalByCat = remember(all, assignments) { all.groupingBy { categoryOf(it, assignments) }.eachCount() }
+    /** Непрочитанные в папке вместе со всеми её подпапками — для верхних папок в строке чипов. */
+    fun unreadDeep(id: String) = categories.subtreeIds(id).sumOf { unreadByCat[it] ?: 0 }
+    // Открытая папка: её путь от верхней папки и подпапки первого уровня.
+    val folderPath = remember(categories, nav.folder) { categories.pathTo(nav.folder) }
+    val subfolders = remember(categories, nav.folder) {
+        if (nav.folder == null || nav.folder == FLAGGED) emptyList() else categories.childrenOf(nav.folder)
+    }
+    /** Куда ведёт «Назад» из папки: в родительскую, а из верхней — ко всем письмам. */
+    fun folderUp() { nav.folder = folderPath.dropLast(1).lastOrNull()?.id }
     // Во «Все» письма выбранных папок сворачиваются в одну строку на месте самого свежего письма (как в Mail.ru).
     val bundles: Map<String, Bundle> = remember(shown, query, nav.folder, settings.bundleFolders, settings.bundled, categories, assignments) {
         if (!settings.bundleFolders || nav.folder != null || query.isNotBlank()) emptyMap()
@@ -339,7 +354,7 @@ fun InboxScreen() {
     BackHandler(selection.isNotEmpty()) { selection.clear() }
     BackHandler(actionKey != null && selection.isEmpty()) { actionKey = null }
     // Из папки («Госписьма», «Важные»…) «Назад» возвращает ко всем письмам, а не закрывает приложение.
-    BackHandler(nav.folder != null && selection.isEmpty() && !searching && actionKey == null) { nav.folder = null }
+    BackHandler(nav.folder != null && selection.isEmpty() && !searching && actionKey == null) { folderUp() }
 
     fun toggle(m: MailMessage) {
         actionKey = null
@@ -435,7 +450,12 @@ fun InboxScreen() {
                         onAccounts = { nav.accountSheetOpen = true },
                         onSearch = { searching = true },
                         onCompose = { nav.push(Route.Compose()) },
-                        onBack = if (nav.folder != null) ({ nav.folder = null }) else null,
+                        onBack = if (nav.folder != null) ({ folderUp() }) else null,
+                    )
+                    // Вложенная папка — показываем путь, по нему можно подняться на любой уровень.
+                    FolderPath(
+                        folderPath.map { c -> c.name to { nav.folder = c.id } },
+                        Modifier.padding(top = 4.dp),
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -463,9 +483,11 @@ fun InboxScreen() {
                             onLongClick = { selectAll(all.filter { it.flagged }) },
                         ) { nav.folder = if (nav.folder == FLAGGED) null else FLAGGED }
                     }
-                    items(categories, key = { it.id }) { c ->
+                    // В строке — только верхние папки; подпапки видны внутри папки и в панели папок.
+                    items(categories.filter { categories.isTopLevel(it) }, key = { it.id }) { c ->
+                        val inBranch = folderPath.firstOrNull()?.id == c.id
                         FolderChip(
-                            c.name, nav.folder == c.id, badge = unreadByCat[c.id] ?: 0,
+                            c.name, inBranch, badge = unreadDeep(c.id),
                             icon = iconFor(c.icon), iconTint = tileColors(c.id, dark).second,
                             onLongClick = { selectAll(all.filter { categoryOf(it, assignments) == c.id }) },
                         ) { nav.folder = if (nav.folder == c.id) null else c.id }
@@ -478,11 +500,21 @@ fun InboxScreen() {
                 item(key = "progress") { LoadingBanner(progress) }
             }
 
+            // Подпапки открытой папки — над её письмами.
+            if (query.isBlank()) items(subfolders, key = { "sub_" + it.id }) { c ->
+                SubfolderRow(
+                    iconFor(c.icon), tileColors(c.id, AppTheme.extra.isDark).second, c.name,
+                    unread = unreadDeep(c.id), total = totalByCat[c.id],
+                    hasChildren = categories.any { it.parent == c.id },
+                    modifier = Modifier.animateItem(),
+                ) { nav.folder = c.id }
+            }
+
             if (accounts.isEmpty()) {
                 item(key = "empty-accounts") { NoAccountsCard { nav.push(Route.AddAccount) } }
             } else if (all.isEmpty() && (progress != null || syncing)) {
                 item(key = "loading") { LoadingCard(progress ?: SyncProgress(active = true)) }
-            } else if (shown.isEmpty() && (!syncing || query.isNotBlank())) {
+            } else if (shown.isEmpty() && (subfolders.isEmpty() || query.isNotBlank()) && (!syncing || query.isNotBlank())) {
                 item(key = "empty") {
                     Text(
                         when {
@@ -647,30 +679,27 @@ private fun Header(
     // Длинное название (папка) — заголовок чуть меньше, чтобы не обрезался.
     val base = titleStyle(titleSize)
     val style = if (title.length > 9) base.copy(fontSize = base.fontSize * 0.82f, lineHeight = base.lineHeight * 0.82f) else base
-    // Слева «≡» (меню ящиков) или стрелка назад, по центру логотип с названием, справа поиск и «написать».
-    Box(Modifier.fillMaxWidth().heightIn(min = 52.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.align(Alignment.CenterStart).offset(x = (-8).dp)) {
+    // Слева «≡» (меню ящиков) или стрелка назад, сразу за ней логотип с названием, справа поиск и «написать».
+    Box(Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        Row(Modifier.fillMaxWidth().offset(x = (-8).dp).align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp)) }
             } else {
                 IconButton(onClick = onAccounts) { Icon(Icons.Rounded.Menu, "Меню", modifier = Modifier.size(26.dp)) }
             }
-        }
-        // Боковые отступы одинаковые, чтобы заголовок стоял точно по центру экрана.
-        Row(Modifier.padding(horizontal = 88.dp), verticalAlignment = Alignment.CenterVertically) {
-            app.vestari.ui.components.BrandTitle(
-                title, style, modifier = Modifier.weight(1f, fill = false), onLogoClick = onAccounts,
-            )
-        }
-        Row(Modifier.align(Alignment.CenterEnd).offset(x = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
-            IconButton(onClick = onCompose) {
-                Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Column(Modifier.weight(1f)) {
+                app.vestari.ui.components.BrandTitle(title, style, onLogoClick = onAccounts)
+                // Маленький индикатор проверки почты — под заголовком, не сдвигая его.
+                AnimatedVisibility(syncing, enter = fadeIn(), exit = fadeOut()) {
+                    LinearProgressIndicator(Modifier.padding(top = 2.dp).width(48.dp).height(2.dp).clip(RoundedCornerShape(50)))
+                }
             }
-        }
-        // Маленький индикатор проверки почты — под заголовком, не сдвигая его.
-        AnimatedVisibility(syncing, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
-            LinearProgressIndicator(Modifier.width(48.dp).height(2.dp).clip(RoundedCornerShape(50)))
+            Row(Modifier.offset(x = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
+                IconButton(onClick = onCompose) {
+                    Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                }
+            }
         }
     }
 }
