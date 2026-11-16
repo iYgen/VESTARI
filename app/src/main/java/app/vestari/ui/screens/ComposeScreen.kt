@@ -9,13 +9,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -50,23 +51,26 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContactMail
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Spellcheck
 import androidx.compose.material.icons.outlined.ShortText
-import androidx.compose.material.icons.outlined.TheaterComedy
-import androidx.compose.material.icons.outlined.EditNote
-import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -76,7 +80,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -95,12 +98,17 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
+import app.vestari.ui.components.Backdrop
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
@@ -146,10 +154,13 @@ private data class AssistProposal(
 
 private val ru = Locale("ru")
 
+/** Голубой второй цвет волны и кнопки «Отправить». */
+private val WaveBlue = Color(0xFF6FC3FF)
+
 /**
- * Экран нового письма: плотный построчный редактор (как в почтовых клиентах), без карточек.
- * Строки «Кому», «Копия», «Скр. копия», «Тема» разделены тонкими линиями, ниже — текст на всю высоту.
- * Черновик сохраняется сам во время набора; при закрытии с изменениями — короткое подтверждение.
+ * Экран нового письма в фирменном стиле Vestari: логотип, светлый градиентный фон с волной,
+ * крупный заголовок, адресаты карточками, тема в поле, блок «Помочь с письмом», вложения чипами
+ * и большая кнопка «Отправить». Черновик сохраняется сам во время набора.
  */
 @Composable
 fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
@@ -272,6 +283,13 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
     // Системная «Назад»: первое нажатие закрывает клавиатуру (это делает сама система), второе — редактор.
     BackHandler { close() }
 
+    fun saveDraftNow() {
+        commitAll()
+        val d = current()
+        if (d.isEmpty) toasts.show("Пустое письмо сохранять не нужно")
+        else { Repository.saveDraft(d); savedAt = System.currentTimeMillis(); dirty = true; toasts.show("Черновик сохранён") }
+    }
+
     /** Проверки перед отправкой. Возвращает черновик или null (и показывает, что не так). */
     fun validated(): Draft? {
         commitAll()
@@ -328,6 +346,8 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
             }
         }
     }
+    fun attach() { runCatching { pickFiles.launch("*/*") } }
+
     // Адрес из контактов телефона: выбор конкретного e-mail даёт доступ только к нему, без разрешения на все контакты.
     val pickContact = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         val uri = res.data?.data ?: return@rememberLauncherForActivityResult
@@ -342,6 +362,10 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
             dirty = true
         }
     }
+    fun pickFromContacts() {
+        runCatching { pickContact.launch(Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Email.CONTENT_URI)) }
+            .onFailure { toasts.show("Не нашлось приложения контактов") }
+    }
 
     fun runAssist(title: String, action: (String) -> TextAssist.Result) {
         val sel = body.selection
@@ -353,65 +377,83 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
         proposal = AssistProposal(title, r, range)
     }
 
-    val bg = AppTheme.extra.card
-    val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (AppTheme.extra.isDark) 0.6f else 0.45f)
+    val extra = AppTheme.extra
+    Box(Modifier.fillMaxSize()) {
+        Backdrop(settings.composeBackdrop, settings.customBackdrop, Modifier.fillMaxSize())
 
-    Surface(Modifier.fillMaxSize(), color = bg) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
-            // ---------- верхняя панель ----------
-            TopBar(
-                from = from, accounts = accounts, sending = sending,
-                canSend = to.isNotEmpty() || toInput.contains('@') || cc.isNotEmpty() || bcc.isNotEmpty(),
-                onClose = ::close,
-                onPickAccount = { fromId = it.id; dirty = true },
-                onSend = { send() },
-            )
-            if (sending) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
-            else HorizontalDivider(color = divider)
-
-            // ---------- поля и текст ----------
             val scroll = rememberScrollState()
-            Column(Modifier.weight(1f).verticalScroll(scroll)) {
+            Column(
+                Modifier.weight(1f).verticalScroll(scroll).statusBarsPadding().padding(horizontal = 20.dp),
+            ) {
+                // ---------- логотип (отключается в профиле) ----------
+                if (settings.showLogo) {
+                    Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AppLogo(34.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Vestari", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // ---------- заголовок ----------
+                Row(Modifier.padding(top = if (settings.showLogo) 18.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = ::close, modifier = Modifier.padding(start = 0.dp)) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (reply != null) "Ответ" else "Новое письмо",
+                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    IconButton(onClick = ::saveDraftNow) {
+                        Icon(Icons.Outlined.Save, "Сохранить черновик", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                    }
+                    MoreMenu(
+                        signatureEnabled = from != null,
+                        onContacts = ::pickFromContacts,
+                        onSignature = { editingSignature = true },
+                        onDiscard = {
+                            Repository.deleteDraft(id)
+                            dirty = false
+                            nav.pop()
+                            toasts.show("Черновик удалён")
+                        },
+                    )
+                }
+
+                // ---------- отправитель и статус черновика ----------
+                FromLine(from, accounts, savedAt) { fromId = it.id; dirty = true }
+
+                // ---------- адресаты ----------
+                Spacer(Modifier.height(14.dp))
                 RecipientRow(
-                    label = "Кому:", list = to, input = toInput,
+                    label = "Кому", list = to, input = toInput,
                     onInput = { toInput = commit(to, it, false); dirty = true },
                     onCommit = { toInput = commit(to, toInput, true) },
                     onRemove = { to.remove(it); dirty = true },
                     onFocus = { if (it) focused = Field.To else { toInput = commit(to, toInput, true) } },
                     focusRequester = toFocus, contacts = contacts,
-                    trailing = {
-                        SmallIcon(Icons.Outlined.ContactMail, "Адрес из контактов") {
-                            runCatching { pickContact.launch(Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Email.CONTENT_URI)) }
-                                .onFailure { toasts.show("Не нашлось приложения контактов") }
-                        }
-                    },
-                )
-                Suggestions(focused == Field.To, toInput, to + cc + bcc, contacts) { c ->
-                    to += c.email; toInput = ""; dirty = true
-                }
-                HorizontalDivider(color = divider)
-
-                AnimatedVisibility(!showCopies, enter = fadeIn(), exit = fadeOut() + shrinkVertically()) {
-                    Column {
+                    trailing = if (!showCopies) ({
                         Text(
-                            "Копия / Скр. копия",
-                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
+                            "Копия", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
-                                .padding(start = 8.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable {
                                     showCopies = true
                                     scope.launch { delay(120); runCatching { ccFocus.requestFocus() } }
                                 }
-                                .padding(horizontal = 8.dp, vertical = 9.dp),
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                         )
-                        HorizontalDivider(color = divider)
-                    }
+                    }) else null,
+                )
+                Suggestions(focused == Field.To, toInput, to + cc + bcc, contacts) { c ->
+                    to += c.email; toInput = ""; dirty = true
                 }
                 AnimatedVisibility(showCopies, enter = expandVertically(tween(220)) + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     Column {
                         RecipientRow(
-                            label = "Копия:", list = cc, input = ccInput,
+                            label = "Копия", list = cc, input = ccInput,
                             onInput = { ccInput = commit(cc, it, false); dirty = true },
                             onCommit = { ccInput = commit(cc, ccInput, true) },
                             onRemove = { cc.remove(it); dirty = true },
@@ -419,9 +461,8 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                             focusRequester = ccFocus, contacts = contacts,
                         )
                         Suggestions(focused == Field.Cc, ccInput, to + cc + bcc, contacts) { c -> cc += c.email; ccInput = ""; dirty = true }
-                        HorizontalDivider(color = divider)
                         RecipientRow(
-                            label = "Скр. копия:", list = bcc, input = bccInput,
+                            label = "Скрытая", list = bcc, input = bccInput,
                             onInput = { bccInput = commit(bcc, it, false); dirty = true },
                             onCommit = { bccInput = commit(bcc, bccInput, true) },
                             onRemove = { bcc.remove(it); dirty = true },
@@ -429,51 +470,25 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                             focusRequester = remember { FocusRequester() }, contacts = contacts,
                         )
                         Suggestions(focused == Field.Bcc, bccInput, to + cc + bcc, contacts) { c -> bcc += c.email; bccInput = ""; dirty = true }
-                        HorizontalDivider(color = divider)
                     }
                 }
 
-                SubjectRow(
+                // ---------- тема ----------
+                Spacer(Modifier.height(14.dp))
+                SubjectField(
                     subject = subject,
                     onChange = { subject = it; dirty = true },
                     onFocus = { if (it) focused = Field.Subject },
                     onNext = { runCatching { bodyFocus.requestFocus() } },
-                    onAttach = { runCatching { pickFiles.launch("*/*") } },
-                    onSchedule = ::schedule,
-                    onSaveDraft = {
-                        commitAll()
-                        val d = current()
-                        if (d.isEmpty) toasts.show("Пустое письмо сохранять не нужно")
-                        else { Repository.saveDraft(d); savedAt = System.currentTimeMillis(); dirty = true; toasts.show("Черновик сохранён") }
-                    },
-                    onSignature = { editingSignature = true },
-                    signatureEnabled = from != null,
-                    onDiscard = {
-                        Repository.deleteDraft(id)
-                        dirty = false
-                        nav.pop()
-                        toasts.show("Черновик удалён")
-                    },
                 )
-                HorizontalDivider(color = divider)
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                if (attachments.isNotEmpty()) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        attachments.forEach { a ->
-                            AttachmentRow(a) {
-                                attachments.remove(a); dirty = true
-                                scope.launch(Dispatchers.IO) { java.io.File(a.path).delete() }
-                            }
-                        }
-                    }
-                    HorizontalDivider(color = divider)
-                }
-
-                // Текст письма: без рамки, занимает всё свободное место; нажатие на пустое место ставит курсор.
+                // ---------- текст письма ----------
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 320.dp)
+                        .heightIn(min = 200.dp)
                         .clickable(remember { MutableInteractionSource() }, indication = null) {
                             runCatching { bodyFocus.requestFocus() }
                         },
@@ -482,18 +497,18 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                         value = body,
                         onValueChange = { if (it.text != body.text) dirty = true; body = it },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = 16.sp, lineHeight = 24.sp, color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 17.sp, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onSurface,
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 14.dp)
+                            .padding(vertical = 18.dp)
                             .focusRequester(bodyFocus)
                             .onFocusChanged { if (it.isFocused) focused = Field.Body },
                         decorationBox = { inner ->
                             if (body.text.isEmpty()) {
-                                Text("Текст письма", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp), color = AppTheme.extra.muted)
+                                Text("Напишите сообщение…", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp), color = extra.muted)
                             }
                             inner()
                         },
@@ -502,48 +517,68 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                 if (from != null && from.signature.isNotBlank()) {
                     Text(
                         "--\n" + from.signature.trim(),
-                        style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.muted,
-                        modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 24.dp)
+                        style = MaterialTheme.typography.bodyMedium, color = extra.muted,
+                        modifier = Modifier.padding(bottom = 16.dp)
                             .clip(RoundedCornerShape(8.dp)).clickable { editingSignature = true },
                     )
                 }
-            }
 
-            // ---------- результат помощника ----------
-            AnimatedVisibility(
-                proposal != null,
-                enter = expandVertically(tween(200)) + fadeIn(), exit = shrinkVertically(tween(160)) + fadeOut(),
-            ) {
-                proposal?.let { p ->
-                    AssistPanel(
-                        p,
-                        onCancel = { proposal = null },
-                        onAccept = {
-                            val before = body
-                            val newText = body.text.replaceRange(p.range.min, p.range.max, p.result.text)
-                            body = TextFieldValue(newText, TextRange(p.range.min + p.result.text.length))
-                            dirty = true
-                            proposal = null
-                            toasts.show("Изменения применены", "Отменить") { body = before }
-                        },
-                    )
-                }
-            }
+                // ---------- помощь с письмом ----------
+                AssistCard(
+                    proposal = proposal,
+                    hasSelection = !body.selection.collapsed,
+                    onAssist = { which ->
+                        when (which) {
+                            0 -> runAssist("Сделать короче", TextAssist::shorten)
+                            1 -> runAssist("Тон: официальнее") { TextAssist.changeTone(it, TextAssist.Tone.Formal) }
+                            2 -> runAssist("Тон: дружелюбнее") { TextAssist.changeTone(it, TextAssist.Tone.Friendly) }
+                            3 -> runAssist("Исправить ошибки", TextAssist::fixErrors)
+                        }
+                    },
+                    onCancel = { proposal = null },
+                    onAccept = { p ->
+                        val before = body
+                        val newText = body.text.replaceRange(p.range.min, p.range.max, p.result.text)
+                        body = TextFieldValue(newText, TextRange(p.range.min + p.result.text.length))
+                        dirty = true
+                        proposal = null
+                        toasts.show("Изменения применены", "Отменить") { body = before }
+                    },
+                )
 
-            // ---------- нижняя строка: помощник и статус черновика ----------
-            HorizontalDivider(color = divider)
-            BottomBar(
-                savedAt = savedAt,
-                hasSelection = !body.selection.collapsed,
-                onAssist = { which ->
-                    when (which) {
-                        0 -> runAssist("Исправить ошибки", TextAssist::fixErrors)
-                        1 -> runAssist("Сделать короче", TextAssist::shorten)
-                        2 -> runAssist("Тон: официальнее") { TextAssist.changeTone(it, TextAssist.Tone.Formal) }
-                        3 -> runAssist("Тон: дружелюбнее") { TextAssist.changeTone(it, TextAssist.Tone.Friendly) }
+                // ---------- подсказка про тему ----------
+                AnimatedVisibility(subject.isBlank(), enter = fadeIn(), exit = fadeOut() + shrinkVertically()) {
+                    Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Info, null, tint = extra.muted, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Подсказка: добавьте тему, чтобы письмо было легче найти.",
+                            style = MaterialTheme.typography.bodyMedium, color = extra.muted,
+                        )
                     }
-                },
-                onAttach = { runCatching { pickFiles.launch("*/*") } },
+                }
+
+                // ---------- вложения ----------
+                Spacer(Modifier.height(16.dp))
+                AttachmentsRow(
+                    attachments = attachments,
+                    onAdd = ::attach,
+                    onRemove = { a ->
+                        attachments.remove(a); dirty = true
+                        scope.launch(Dispatchers.IO) { java.io.File(a.path).delete() }
+                    },
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // ---------- нижняя панель: отправить, позже, ещё ----------
+            BottomActions(
+                sending = sending,
+                onSend = { send() },
+                onSchedule = ::schedule,
+                onAttach = ::attach,
+                onSaveDraft = ::saveDraftNow,
+                onCopies = { showCopies = true; scope.launch { delay(120); runCatching { ccFocus.requestFocus() } } },
             )
         }
     }
@@ -559,32 +594,22 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
 
 // ============================ части экрана ============================
 
+/** «от ящик ▾ · черновик 21:47» — выбор ящика, если их несколько. */
 @Composable
-private fun TopBar(
-    from: Account?, accounts: List<Account>, sending: Boolean, canSend: Boolean,
-    onClose: () -> Unit, onPickAccount: (Account) -> Unit, onSend: () -> Unit,
-) {
+private fun FromLine(from: Account?, accounts: List<Account>, savedAt: Long?, onPick: (Account) -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    Row(
-        Modifier.statusBarsPadding().fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Закрыть") }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+    Row(Modifier.padding(start = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box {
             Row(
-                Modifier
-                    .clip(RoundedCornerShape(50))
-                    .clickable(enabled = accounts.size > 1) { menu = true }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = accounts.size > 1) { menu = true }.padding(vertical = 2.dp, horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    from?.email ?: "Нет ящика",
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 220.dp),
+                    "от " + (from?.email ?: "нет ящика"),
+                    style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 230.dp),
                 )
-                if (accounts.size > 1) Icon(Icons.Rounded.ArrowDropDown, "Сменить ящик", tint = AppTheme.extra.muted, modifier = Modifier.size(20.dp))
+                if (accounts.size > 1) Icon(Icons.Rounded.KeyboardArrowDown, "Сменить ящик", tint = AppTheme.extra.muted, modifier = Modifier.size(16.dp))
             }
             DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = AppTheme.extra.card) {
                 accounts.forEach { a ->
@@ -592,29 +617,46 @@ private fun TopBar(
                         leadingIcon = { AccountAvatar(a, 26.dp) },
                         text = { Text(a.email, style = MaterialTheme.typography.bodyMedium) },
                         trailingIcon = { if (a.id == from?.id) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = { onPickAccount(a); menu = false },
+                        onClick = { onPick(a); menu = false },
                     )
                 }
             }
         }
-        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-            if (sending) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else {
-                val tint by animateColorAsState(if (canSend) MaterialTheme.colorScheme.primary else AppTheme.extra.muted, label = "sendTint")
-                IconButton(onClick = onSend) { Icon(Icons.AutoMirrored.Rounded.Send, "Отправить", tint = tint) }
-            }
+        if (savedAt != null) {
+            Text(
+                " · черновик " + SimpleDateFormat("HH:mm", ru).format(savedAt),
+                style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+            )
         }
     }
 }
 
 @Composable
-private fun SmallIcon(icon: ImageVector, description: String, tint: Color = AppTheme.extra.muted, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
-        Icon(icon, description, tint = tint, modifier = Modifier.size(20.dp))
+private fun MoreMenu(signatureEnabled: Boolean, onContacts: () -> Unit, onSignature: () -> Unit, onDiscard: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Ещё", modifier = Modifier.size(26.dp)) }
+        DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = AppTheme.extra.card) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.ContactMail, null) },
+                text = { Text("Адрес из контактов") },
+                onClick = { menu = false; onContacts() },
+            )
+            if (signatureEnabled) DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.EditNote, null) },
+                text = { Text("Подпись ящика") },
+                onClick = { menu = false; onSignature() },
+            )
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = AppTheme.extra.unreadDot) },
+                text = { Text("Удалить черновик", color = AppTheme.extra.unreadDot) },
+                onClick = { menu = false; onDiscard() },
+            )
+        }
     }
 }
 
-/** Строка адресатов: подпись слева, чипы и поле ввода в одной строке с переносом, справа — действие. */
+/** Строка адресатов: подпись слева, карточки адресатов и поле ввода с переносом, справа — «Копия». */
 @Composable
 private fun RecipientRow(
     label: String,
@@ -630,15 +672,14 @@ private fun RecipientRow(
 ) {
     val names = remember(contacts) { contacts.associate { it.email to it.name } }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.muted)
-        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium, color = AppTheme.extra.muted, modifier = Modifier.width(72.dp))
         FlowRow(
-            Modifier.weight(1f).padding(vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             list.forEach { email ->
                 RecipientChip(email, names[email.lowercase()].orEmpty(), onRemove = { onRemove(email) })
@@ -647,52 +688,59 @@ private fun RecipientRow(
                 value = input,
                 onValueChange = onInput,
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { onCommit() }),
                 modifier = Modifier
                     .weight(1f)
-                    .widthIn(min = 120.dp)
+                    .widthIn(min = 110.dp)
                     .align(Alignment.CenterVertically)
-                    .padding(vertical = 6.dp)
+                    .padding(vertical = 10.dp)
                     .focusRequester(focusRequester)
                     .onFocusChanged { onFocus(it.isFocused) },
+                decorationBox = { inner ->
+                    if (input.isEmpty() && list.isEmpty()) Text("Адрес или имя", style = MaterialTheme.typography.bodyLarge, color = AppTheme.extra.muted.copy(alpha = 0.7f))
+                    inner()
+                },
             )
         }
         trailing?.invoke()
     }
 }
 
+/** Адресат карточкой: кружок с инициалами, имя и адрес, крестик. */
 @Composable
 private fun RecipientChip(email: String, name: String, onRemove: () -> Unit) {
     val valid = TextAssist.isEmail(email)
-    val color = AvatarColors[(email.lowercase().hashCode() and 0x7fffffff) % AvatarColors.size]
+    val primary = MaterialTheme.colorScheme.primary
     Row(
         Modifier
             .clip(RoundedCornerShape(50))
             .background(if (valid) AppTheme.extra.accentSoft else AppTheme.extra.unreadDot.copy(alpha = 0.15f))
-            .padding(start = 3.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+            .padding(start = 5.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(20.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-            Text(
-                (name.ifBlank { email }).first().uppercaseChar().toString(),
-                color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
-            )
-        }
-        Spacer(Modifier.width(6.dp))
-        Text(
-            name.ifBlank { email },
-            style = MaterialTheme.typography.labelLarge,
-            color = if (valid) MaterialTheme.colorScheme.onSurface else AppTheme.extra.unreadDot,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 200.dp),
-        )
         Box(
-            Modifier.padding(start = 2.dp).size(20.dp).clip(CircleShape).clickable(onClick = onRemove),
+            Modifier.size(38.dp).clip(CircleShape).background(Brush.linearGradient(listOf(primary, WaveBlue.copy(alpha = 0.7f).compositeOver(primary)))),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Close, "Убрать $email", tint = AppTheme.extra.muted, modifier = Modifier.size(14.dp)) }
+        ) {
+            Text(initials(Contact(email, name, 0)), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.widthIn(max = 190.dp)) {
+            Text(
+                name.ifBlank { email.substringBefore('@') },
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                color = if (valid) MaterialTheme.colorScheme.onSurface else AppTheme.extra.unreadDot,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(email, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Box(
+            Modifier.padding(start = 4.dp).size(28.dp).clip(CircleShape).clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Close, "Убрать $email", tint = AppTheme.extra.muted, modifier = Modifier.size(18.dp)) }
     }
 }
 
@@ -708,26 +756,31 @@ private fun Suggestions(visible: Boolean, query: String, added: List<String>, co
             .take(5).toList()
     }
     AnimatedVisibility(visible && matches.isNotEmpty(), enter = expandVertically(tween(160)) + fadeIn(), exit = shrinkVertically(tween(120)) + fadeOut()) {
-        Column(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp)) {
-            matches.forEach { c ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onPick(c) }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val color = AvatarColors[(c.email.hashCode() and 0x7fffffff) % AvatarColors.size]
-                    Box(Modifier.size(30.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-                        Text(initials(c), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        if (c.name.isNotBlank()) {
-                            Text(c.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Surface(
+            shape = RoundedCornerShape(18.dp), color = AppTheme.extra.card, shadowElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        ) {
+            Column(Modifier.padding(6.dp)) {
+                matches.forEach { c ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPick(c) }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val color = AvatarColors[(c.email.hashCode() and 0x7fffffff) % AvatarColors.size]
+                        Box(Modifier.size(32.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
+                            Text(initials(c), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                        Text(c.email, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            if (c.name.isNotBlank()) {
+                                Text(c.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Text(c.email, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
@@ -744,41 +797,223 @@ private fun initials(c: Contact): String {
     }
 }
 
-/** Строка темы со скрепкой, отложенной отправкой и меню прочих действий. */
+/** Тема письма — в скруглённом поле. */
 @Composable
-private fun SubjectRow(
-    subject: String,
-    onChange: (String) -> Unit,
-    onFocus: (Boolean) -> Unit,
-    onNext: () -> Unit,
-    onAttach: () -> Unit,
-    onSchedule: (Long, String) -> Unit,
-    onSaveDraft: () -> Unit,
-    onSignature: () -> Unit,
-    signatureEnabled: Boolean,
-    onDiscard: () -> Unit,
+private fun SubjectField(subject: String, onChange: (String) -> Unit, onFocus: (Boolean) -> Unit, onNext: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    val border = if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+    BasicTextField(
+        value = subject,
+        onValueChange = onChange,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
+        keyboardActions = KeyboardActions(onNext = { onNext() }),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused; onFocus(it.isFocused) },
+        decorationBox = { inner ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AppTheme.extra.card.copy(alpha = if (AppTheme.extra.isDark) 0.9f else 0.75f))
+                    .border(1.dp, border, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+            ) {
+                if (subject.isEmpty()) Text("Тема письма", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp), color = AppTheme.extra.muted)
+                inner()
+            }
+        },
+    )
+}
+
+/** Блок «Помочь с письмом»: три быстрых действия и предпросмотр результата. */
+@Composable
+private fun AssistCard(
+    proposal: AssistProposal?,
+    hasSelection: Boolean,
+    onAssist: (Int) -> Unit,
+    onCancel: () -> Unit,
+    onAccept: (AssistProposal) -> Unit,
 ) {
+    val primary = MaterialTheme.colorScheme.primary
+    val extra = AppTheme.extra
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(extra.accentSoft, primary.copy(alpha = if (extra.isDark) 0.16f else 0.10f), WaveBlue.copy(alpha = if (extra.isDark) 0.14f else 0.18f)),
+                ),
+            )
+            .border(1.dp, primary.copy(alpha = 0.12f), RoundedCornerShape(24.dp))
+            .padding(14.dp),
+    ) {
+        Column {
+            Row(Modifier.padding(start = 6.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.AutoAwesome, null, tint = primary, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Помочь с письмом", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (hasSelection) Text("к выделенному", style = MaterialTheme.typography.labelSmall, color = extra.muted)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(Icons.Outlined.ShortText, "Сделать\nкороче", Modifier.weight(1f)) { onAssist(0) }
+                Box(Modifier.weight(1f)) {
+                    var toneMenu by remember { mutableStateOf(false) }
+                    AssistChip(Icons.Outlined.ChatBubbleOutline, "Проверить\nтон", Modifier.fillMaxWidth()) { toneMenu = true }
+                    DropdownMenu(toneMenu, onDismissRequest = { toneMenu = false }, containerColor = extra.card) {
+                        DropdownMenuItem(text = { Text("Официальнее") }, onClick = { toneMenu = false; onAssist(1) })
+                        DropdownMenuItem(text = { Text("Дружелюбнее") }, onClick = { toneMenu = false; onAssist(2) })
+                    }
+                }
+                AssistChip(Icons.Outlined.CheckCircle, "Исправить\nошибки", Modifier.weight(1f)) { onAssist(3) }
+            }
+            AnimatedVisibility(proposal != null, enter = expandVertically(tween(200)) + fadeIn(), exit = shrinkVertically(tween(160)) + fadeOut()) {
+                proposal?.let { p ->
+                    Surface(
+                        color = extra.card, shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    ) {
+                        Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 4.dp)) {
+                            Text(
+                                p.title + if (p.result.changes > 0) " · правок: ${p.result.changes}" else "",
+                                style = MaterialTheme.typography.labelLarge, color = primary,
+                            )
+                            Text(
+                                p.result.text,
+                                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                                modifier = Modifier.padding(top = 6.dp, end = 8.dp).heightIn(max = 180.dp).verticalScroll(rememberScrollState()),
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = onCancel) { Text("Отменить") }
+                                Spacer(Modifier.width(4.dp))
+                                Button(onClick = { onAccept(p) }, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
+                                    Text("Принять")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssistChip(icon: ImageVector, text: String, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(AppTheme.extra.card.copy(alpha = if (AppTheme.extra.isDark) 0.95f else 0.85f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp, maxLines = 2)
+    }
+}
+
+/** Вложения чипами: иконка типа, имя, крестик; в конце — «+». */
+@Composable
+private fun AttachmentsRow(attachments: List<DraftAttachment>, onAdd: () -> Unit, onRemove: (DraftAttachment) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.AttachFile, null, tint = AppTheme.extra.muted, modifier = Modifier.size(26.dp))
+        Spacer(Modifier.width(10.dp))
+        FlowRow(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            attachments.forEach { a -> AttachmentChip(a) { onRemove(a) } }
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(AppTheme.extra.accentSoft)
+                    .clickable(onClick = onAdd),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Add, "Прикрепить файл", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentChip(a: DraftAttachment, onRemove: () -> Unit) {
+    val ext = a.name.substringAfterLast('.', "").uppercase().take(4)
+    val (icon, tint) = when {
+        a.mime.startsWith("image/") -> Icons.Outlined.Image to Color(0xFF3D86F5)
+        a.mime == "application/pdf" || ext == "PDF" -> Icons.Outlined.PictureAsPdf to Color(0xFFE5484D)
+        else -> Icons.Outlined.Description to MaterialTheme.colorScheme.primary
+    }
+    Row(
+        Modifier
+            .heightIn(min = 52.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppTheme.extra.card)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+            .padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.widthIn(max = 150.dp)) {
+            Text(a.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(formatSize(a.size), style = MaterialTheme.typography.labelSmall, color = AppTheme.extra.muted)
+        }
+        IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Rounded.Close, "Убрать вложение ${a.name}", tint = AppTheme.extra.muted, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+private fun formatSize(b: Long): String = when {
+    b < 1024 -> "$b Б"
+    b < 1024 * 1024 -> "${b / 1024} КБ"
+    else -> String.format(ru, "%.1f МБ", b / 1024.0 / 1024.0)
+}
+
+/** Большая кнопка «Отправить», рядом — «Отправить позже» и меню. */
+@Composable
+private fun BottomActions(
+    sending: Boolean,
+    onSend: () -> Unit,
+    onSchedule: (Long, String) -> Unit,
+    onAttach: () -> Unit,
+    onSaveDraft: () -> Unit,
+    onCopies: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
     var scheduleMenu by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp),
+        Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Тема:", style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.muted)
-        Spacer(Modifier.width(8.dp))
-        BasicTextField(
-            value = subject,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
-            keyboardActions = KeyboardActions(onNext = { onNext() }),
-            modifier = Modifier.weight(1f).padding(vertical = 12.dp).onFocusChanged { onFocus(it.isFocused) },
-        )
-        SmallIcon(Icons.Outlined.AttachFile, "Прикрепить файл", onClick = onAttach)
+        Box(
+            Modifier
+                .weight(1f)
+                .height(60.dp)
+                .clip(RoundedCornerShape(30.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xFF4F7BFF), primary, Color(0xFF7B4DFF))))
+                .clickable(enabled = !sending, onClick = onSend),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (sending) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                else Icon(Icons.AutoMirrored.Outlined.Send, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Text(if (sending) "Отправляю…" else "Отправить", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            }
+        }
         Box {
-            SmallIcon(Icons.Outlined.Schedule, "Отправить позже") { scheduleMenu = true }
+            RoundAction(Icons.Outlined.Schedule, "Отправить позже") { scheduleMenu = true }
             DropdownMenu(scheduleMenu, onDismissRequest = { scheduleMenu = false }, containerColor = AppTheme.extra.card) {
                 Text(
                     "Отправить позже", style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
@@ -793,26 +1028,22 @@ private fun SubjectRow(
             }
         }
         Box {
-            SmallIcon(Icons.Rounded.MoreVert, "Ещё") { moreMenu = true }
+            RoundAction(Icons.Rounded.MoreVert, "Ещё") { moreMenu = true }
             DropdownMenu(moreMenu, onDismissRequest = { moreMenu = false }, containerColor = AppTheme.extra.card) {
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Outlined.Save, null) },
-                    text = { Text("Сохранить черновик") },
-                    onClick = { moreMenu = false; onSaveDraft() },
-                )
-                if (signatureEnabled) DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Outlined.EditNote, null) },
-                    text = { Text("Подпись ящика") },
-                    onClick = { moreMenu = false; onSignature() },
-                )
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = AppTheme.extra.unreadDot) },
-                    text = { Text("Удалить черновик", color = AppTheme.extra.unreadDot) },
-                    onClick = { moreMenu = false; onDiscard() },
-                )
+                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, text = { Text("Прикрепить файл") }, onClick = { moreMenu = false; onAttach() })
+                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.ContactMail, null) }, text = { Text("Копия и скрытая копия") }, onClick = { moreMenu = false; onCopies() })
+                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.Save, null) }, text = { Text("Сохранить черновик") }, onClick = { moreMenu = false; onSaveDraft() })
             }
         }
     }
+}
+
+@Composable
+private fun RoundAction(icon: ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(60.dp).clip(RoundedCornerShape(20.dp)).background(AppTheme.extra.accentSoft).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, description, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp)) }
 }
 
 /** Варианты отложенной отправки относительно текущего времени. */
@@ -837,119 +1068,6 @@ private fun scheduleLabel(at: Long): String {
         c.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) && c.get(Calendar.YEAR) == today.get(Calendar.YEAR) -> "сегодня в $time"
         c.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) + 1 -> "завтра в $time"
         else -> SimpleDateFormat("d MMMM в HH:mm", ru).format(c.time)
-    }
-}
-
-@Composable
-private fun AttachmentRow(a: DraftAttachment, onRemove: () -> Unit) {
-    val ext = a.name.substringAfterLast('.', "").uppercase().take(4)
-    val (icon, tint) = when {
-        a.mime.startsWith("image/") -> Icons.Outlined.Image to Color(0xFF3D86F5)
-        a.mime == "application/pdf" || ext == "PDF" -> Icons.Outlined.PictureAsPdf to Color(0xFFE5484D)
-        else -> Icons.Outlined.Description to MaterialTheme.colorScheme.primary
-    }
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(start = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(a.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Spacer(Modifier.width(8.dp))
-        Text(
-            listOf(ext.ifEmpty { null }, formatSize(a.size)).filterNotNull().joinToString(" · "),
-            style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
-        )
-        Spacer(Modifier.weight(1f))
-        SmallIcon(Icons.Rounded.Close, "Убрать вложение ${a.name}", onClick = onRemove)
-    }
-}
-
-private fun formatSize(b: Long): String = when {
-    b < 1024 -> "$b Б"
-    b < 1024 * 1024 -> "${b / 1024} КБ"
-    else -> String.format(ru, "%.1f МБ", b / 1024.0 / 1024.0)
-}
-
-/** Нижняя строка: кнопка помощника с коротким меню и тихий статус черновика. */
-@Composable
-private fun BottomBar(savedAt: Long?, hasSelection: Boolean, onAssist: (Int) -> Unit, onAttach: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box {
-            Row(
-                Modifier.clip(RoundedCornerShape(50)).clickable { menu = true }.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Помощь", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            }
-            DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = AppTheme.extra.card) {
-                Text(
-                    if (hasSelection) "Для выделенного текста" else "Для всего письма",
-                    style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
-                listOf(
-                    Triple(0, "Исправить ошибки", Icons.Outlined.Spellcheck),
-                    Triple(1, "Сделать короче", Icons.Outlined.ShortText),
-                    Triple(2, "Тон: официальнее", Icons.Outlined.TheaterComedy),
-                    Triple(3, "Тон: дружелюбнее", Icons.Outlined.TheaterComedy),
-                ).forEach { (i, title, icon) ->
-                    DropdownMenuItem(
-                        leadingIcon = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
-                        text = { Text(title, style = MaterialTheme.typography.bodyMedium) },
-                        onClick = { menu = false; onAssist(i) },
-                    )
-                }
-            }
-        }
-        SmallIcon(Icons.Outlined.AttachFile, "Прикрепить файл", onClick = onAttach)
-        Spacer(Modifier.weight(1f))
-        if (savedAt != null) {
-            Text(
-                "Черновик · " + SimpleDateFormat("HH:mm", ru).format(savedAt),
-                style = MaterialTheme.typography.labelSmall, color = AppTheme.extra.muted,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-        }
-    }
-}
-
-/** Предпросмотр правки помощника: результат можно принять или отменить. */
-@Composable
-private fun AssistPanel(p: AssistProposal, onCancel: () -> Unit, onAccept: () -> Unit) {
-    Surface(
-        color = AppTheme.extra.accentSoft,
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-    ) {
-        Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    p.title + if (p.result.changes > 0) " · правок: ${p.result.changes}" else "",
-                    style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f),
-                )
-            }
-            Text(
-                p.result.text,
-                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
-                modifier = Modifier.padding(top = 6.dp, end = 8.dp).heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onCancel) { Text("Отменить") }
-                Spacer(Modifier.width(4.dp))
-                Button(onClick = onAccept, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
-                    Text("Принять")
-                }
-            }
-        }
     }
 }
 

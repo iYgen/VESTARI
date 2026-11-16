@@ -124,6 +124,14 @@ data class Settings(
     val bundleFolders: Boolean = true,
     /** Какие папки сворачивать. По умолчанию — как в Mail.ru: рассылки, чеки, скидки, госписьма. */
     val bundled: Set<String> = setOf("newsletters", "receipts", "sales", "gov"),
+
+    // ---- оформление экрана письма ----
+    /** Логотип Vestari вверху экрана письма. */
+    val showLogo: Boolean = true,
+    /** Фон экрана письма: id из [app.vestari.ui.components.Backdrops] или «custom». */
+    val composeBackdrop: String = "wave",
+    /** Путь к своей картинке фона (копия во внутренней папке приложения). */
+    val customBackdrop: String? = null,
 )
 
 /**

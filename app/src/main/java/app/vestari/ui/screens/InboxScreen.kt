@@ -18,8 +18,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -239,6 +250,9 @@ fun InboxScreen() {
     val selection = remember { mutableStateListOf<String>() }
     /** Письмо, у которого свайпом влево открыты кнопки «Удалить / В спам». */
     var actionKey by remember { mutableStateOf<String?>(null) }
+    /** Поиск раскрыт в шапке: письма остаются на месте, а с текстом — фильтруются. */
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
 
     val selectedId = settings.selectedAccountId?.takeIf { id -> accounts.any { it.id == id } }
         ?: accounts.singleOrNull()?.id
@@ -258,25 +272,34 @@ fun InboxScreen() {
             else -> all.filter { categoryOf(it, assignments) == nav.folder }
         }
     }
+    // Поиск по уже скачанным письмам текущей папки: отправитель, адрес, тема, начало текста.
+    val shown = remember(visible, query) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) visible
+        else visible.filter {
+            it.senderTitle.lowercase().contains(q) || it.fromEmail.lowercase().contains(q) ||
+                it.subject.lowercase().contains(q) || it.preview.lowercase().contains(q)
+        }
+    }
     // Непрочитанные по папкам: у папки появляется жирное название и «(N)».
     val unreadByCat = remember(all, assignments) {
         all.filter { !it.seen }.groupingBy { categoryOf(it, assignments) }.eachCount()
     }
     // Во «Все» письма выбранных папок сворачиваются в одну строку на месте самого свежего письма (как в Mail.ru).
-    val bundles: Map<String, Bundle> = remember(visible, nav.folder, settings.bundleFolders, settings.bundled, categories, assignments) {
-        if (!settings.bundleFolders || nav.folder != null) emptyMap()
-        else visible.groupBy { categoryOf(it, assignments) }
+    val bundles: Map<String, Bundle> = remember(shown, query, nav.folder, settings.bundleFolders, settings.bundled, categories, assignments) {
+        if (!settings.bundleFolders || nav.folder != null || query.isNotBlank()) emptyMap()
+        else shown.groupBy { categoryOf(it, assignments) }
             .filterKeys { it != null && it in settings.bundled }
             .mapNotNull { (id, list) -> catById[id]?.let { id!! to Bundle(it, list) } }
             .toMap()
     }
     // Строки списка: письма, свёрнутые папки и (если включено) разделители «Сегодня», «Вчера»…
-    val rows: List<Any> = remember(visible, bundles, settings.groupByDate) {
+    val rows: List<Any> = remember(shown, bundles, settings.groupByDate) {
         buildList {
             var last: String? = null
             val now = System.currentTimeMillis()
             val placed = mutableSetOf<String>()
-            visible.forEach { m ->
+            shown.forEach { m ->
                 val cat = categoryOf(m, assignments)
                 val row: Any = if (cat != null && cat in bundles) {
                     if (!placed.add(cat)) return@forEach
@@ -307,6 +330,7 @@ fun InboxScreen() {
     // Письмо пропало (удалено, перенесено) — снимаем с него выделение.
     LaunchedEffect(all) { selection.retainAll(all.map { it.key }.toSet()) }
 
+    BackHandler(searching && selection.isEmpty()) { searching = false; query = "" }
     BackHandler(selection.isNotEmpty()) { selection.clear() }
     BackHandler(actionKey != null && selection.isEmpty()) { actionKey = null }
 
@@ -403,7 +427,7 @@ fun InboxScreen() {
                         titleSize = settings.titleSize,
                         syncing = syncing,
                         onAccounts = { nav.accountSheetOpen = true },
-                        onSearch = { nav.tab = Tab.Search },
+                        onSearch = { searching = true },
                         onCompose = { nav.push(Route.Compose()) },
                     )
                     if (accounts.isNotEmpty()) {
@@ -457,12 +481,13 @@ fun InboxScreen() {
                 item(key = "empty-accounts") { NoAccountsCard { nav.push(Route.AddAccount) } }
             } else if (all.isEmpty() && (progress != null || syncing)) {
                 item(key = "loading") { LoadingCard(progress ?: SyncProgress(active = true)) }
-            } else if (visible.isEmpty() && !syncing) {
+            } else if (shown.isEmpty() && (!syncing || query.isNotBlank())) {
                 item(key = "empty") {
                     Text(
-                        when (nav.folder) {
-                            null -> "Писем пока нет"
-                            FLAGGED -> "Нет писем, отмеченных флажком"
+                        when {
+                            query.isNotBlank() -> "Ничего не найдено по «${query.trim()}»"
+                            nav.folder == null -> "Писем пока нет"
+                            nav.folder == FLAGGED -> "Нет писем, отмеченных флажком"
                             else -> "В этой папке пусто"
                         },
                         color = AppTheme.extra.muted, textAlign = TextAlign.Center,
@@ -515,6 +540,26 @@ fun InboxScreen() {
                     }
                 }
             }
+        }
+
+        // Поиск: пока ничего не набрано, список затемнён, но виден; нажатие на затемнение закрывает поиск.
+        AnimatedVisibility(searching && query.isBlank(), enter = fadeIn(), exit = fadeOut()) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (AppTheme.extra.isDark) 0.45f else 0.32f))
+                    .clickable(remember { MutableInteractionSource() }, indication = null) { searching = false },
+            )
+        }
+        AnimatedVisibility(
+            searching && selection.isEmpty(),
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = fadeIn(tween(120)), exit = fadeOut(tween(120)),
+        ) {
+            InlineSearchBar(
+                query = query,
+                found = if (query.isBlank()) null else shown.size,
+                onQuery = { query = it },
+                onClose = { searching = false; query = "" },
+            )
         }
 
         // Режим выделения: панель действий наверху поверх списка.
@@ -617,6 +662,43 @@ private fun Header(
         IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
         IconButton(onClick = onCompose) {
             Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+/** Строка поиска, раскрывающаяся от лупы на всю ширину шапки. */
+@Composable
+private fun InlineSearchBar(query: String, found: Int?, onQuery: (String) -> Unit, onClose: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { expanded = true; delay(180); runCatching { focus.requestFocus() } }
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.CenterEnd) {
+        AnimatedVisibility(
+            expanded,
+            enter = expandHorizontally(tween(220), expandFrom = Alignment.End) + fadeIn(),
+            exit = shrinkHorizontally(tween(160), shrinkTowards = Alignment.End) + fadeOut(),
+        ) {
+            Surface(shape = RoundedCornerShape(50), color = AppTheme.extra.card, shadowElevation = 8.dp, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.height(54.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Search, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    BasicTextField(
+                        value = query,
+                        onValueChange = onQuery,
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        modifier = Modifier.weight(1f).focusRequester(focus),
+                        decorationBox = { inner ->
+                            if (query.isEmpty()) Text("Поиск по письмам", style = MaterialTheme.typography.bodyLarge, color = AppTheme.extra.muted)
+                            inner()
+                        },
+                    )
+                    if (found != null) Text("$found", style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted, modifier = Modifier.padding(horizontal = 6.dp))
+                    IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Закрыть поиск") }
+                }
+            }
         }
     }
 }

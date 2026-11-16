@@ -612,6 +612,17 @@ object Repository {
         io.launch { draftDir(id).deleteRecursively() }
     }
 
+    /** Своя картинка фона экрана письма: копия во внутренней папке, старая удаляется. */
+    suspend fun setCustomBackdrop(context: Context, uri: android.net.Uri) = withContext(Dispatchers.IO) {
+        val folder = File(dir.parentFile, "backdrops").apply { mkdirs() }
+        // Новое имя каждый раз — экран сразу видит новую картинку, а не закэшированную старую.
+        val target = File(folder, "custom_${System.currentTimeMillis()}.img")
+        context.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
+            ?: throw IllegalStateException("Не удалось открыть картинку")
+        folder.listFiles()?.filter { it != target }?.forEach { it.delete() }
+        updateSettings { it.copy(composeBackdrop = "custom", customBackdrop = target.absolutePath) }
+    }
+
     /** Копирует выбранный файл во внутреннюю папку черновика: так он не пропадёт, даже если исходник удалят. */
     suspend fun importAttachment(context: Context, draftId: String, uri: android.net.Uri): DraftAttachment =
         withContext(Dispatchers.IO) {

@@ -409,6 +409,8 @@ fun ProfileScreen() {
             ) { v -> Repository.updateSettings { it.copy(autoImages = v) } }
         }
 
+        ComposeLookCard(settings)
+
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.primary,
@@ -775,5 +777,72 @@ private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> U
                 contentAlignment = Alignment.Center,
             ) { Text(label, style = MaterialTheme.typography.labelMedium) }
         }
+    }
+}
+
+/** Оформление экрана письма: логотип и фон (готовые рисунки или своя картинка). */
+@Composable
+private fun ComposeLookCard(settings: app.vestari.data.Settings) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val toasts = LocalToasts.current
+    val scope = rememberCoroutineScope()
+    val pickImage = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) scope.launch {
+            runCatching { Repository.setCustomBackdrop(context, uri) }
+                .onSuccess { toasts.show("Фон установлен") }
+                .onFailure { toasts.show("Не удалось открыть картинку", error = true) }
+        }
+    }
+    Card {
+        Text("Экран письма", style = MaterialTheme.typography.titleMedium)
+        SwitchRow("Логотип Vestari", "Показывать логотип вверху экрана нового письма", settings.showLogo) { v ->
+            Repository.updateSettings { it.copy(showLogo = v) }
+        }
+        Text("Фон", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            app.vestari.ui.components.Backdrops.presets.forEach { (id, title) ->
+                BackdropTile(title, settings.composeBackdrop == id, onClick = { Repository.updateSettings { it.copy(composeBackdrop = id) } }) {
+                    app.vestari.ui.components.Backdrop(id, null, Modifier.fillMaxSize())
+                }
+            }
+            val custom = app.vestari.ui.components.Backdrops.CUSTOM
+            BackdropTile(
+                "Своя картинка", settings.composeBackdrop == custom,
+                onClick = {
+                    if (settings.customBackdrop != null && settings.composeBackdrop != custom) Repository.updateSettings { it.copy(composeBackdrop = custom) }
+                    else runCatching { pickImage.launch("image/*") }
+                },
+            ) {
+                if (settings.customBackdrop != null) app.vestari.ui.components.Backdrop(custom, settings.customBackdrop, Modifier.fillMaxSize())
+                else Box(Modifier.fillMaxSize().background(AppTheme.extra.accentSoft), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+        if (settings.customBackdrop != null) {
+            TextButton(onClick = { runCatching { pickImage.launch("image/*") } }) { Text("Выбрать другую картинку") }
+        }
+    }
+}
+
+@Composable
+private fun BackdropTile(title: String, selected: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .size(width = 64.dp, height = 104.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                .bouncyClick(onClick = onClick),
+        ) {
+            content()
+            if (selected) Box(
+                Modifier.align(Alignment.TopEnd).padding(5.dp).size(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+        }
+        Text(title, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
     }
 }
