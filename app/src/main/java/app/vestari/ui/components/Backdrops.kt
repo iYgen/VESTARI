@@ -185,21 +185,36 @@ fun Pattern(id: String, modifier: Modifier = Modifier) {
  * Логотип и надпись «Vestari» включаются в «Внешнем виде».
  */
 @Composable
-fun BrandTitle(text: String, style: TextStyle, modifier: Modifier = Modifier, look: Settings = LocalLook.current) {
+fun BrandTitle(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    look: Settings = LocalLook.current,
+    /** Нажатие на логотип (например, выбор ящика на «Почте»). */
+    onLogoClick: (() -> Unit)? = null,
+    /** Минимальный размер значка — в мини-превью он меньше обычного. */
+    minLogo: Float = 20f,
+) {
+    val size = style.fontSize.value
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (look.showLogo) {
-            val logo = (style.fontSize.value * 1.25f).coerceIn(20f, 40f).dp
-            AppLogo(logo)
-            Spacer(Modifier.width(10.dp))
+            val logo = (size * 1.25f).coerceIn(minLogo, 40f).dp
+            Box(if (onLogoClick != null) Modifier.clip(RoundedCornerShape(logo * 0.3f)).bouncyClick(onClick = onLogoClick) else Modifier) {
+                AppLogo(logo)
+            }
+            Spacer(Modifier.width((size * 0.4f).coerceIn(4f, 10f).dp))
         }
         Column {
             if (look.showLogo && look.logoText) {
+                // Подпись масштабируется вместе с заголовком и никогда не переносится.
+                val small = (size * 0.42f).coerceIn(3f, 10f)
                 Text(
-                    "VESTARI", fontSize = 10.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary, lineHeight = 11.sp,
+                    "VESTARI", fontSize = small.sp, letterSpacing = (small * 0.15f).sp, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary, lineHeight = (small * 1.1f).sp,
+                    maxLines = 1, softWrap = false,
                 )
             }
-            Text(text, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, style = style, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -217,10 +232,12 @@ fun LookPreview(look: Settings, modifier: Modifier = Modifier, width: Dp = 96.dp
     Box(modifier.size(width, height).clip(RoundedCornerShape(width * 0.14f))) {
         AppBackdrop(look, Modifier.fillMaxSize(), scale = k)
         Column(Modifier.fillMaxSize().padding(horizontal = width * 0.07f, vertical = width * 0.08f)) {
+            // Размер шрифта зависит от ширины превью: в маленьких плитках всё уменьшается пропорционально.
             BrandTitle(
                 "Входящие",
-                MaterialTheme.typography.titleSmall.copy(fontSize = (width.value / 8.5f).sp, fontWeight = FontWeight.Bold),
+                MaterialTheme.typography.titleSmall.copy(fontSize = (width.value / 11f).sp, lineHeight = (width.value / 9f).sp, fontWeight = FontWeight.Bold),
                 look = look,
+                minLogo = width.value * 0.12f,
             )
             Spacer(Modifier.height(width * 0.08f))
             Column(verticalArrangement = Arrangement.spacedBy(width * 0.04f)) {

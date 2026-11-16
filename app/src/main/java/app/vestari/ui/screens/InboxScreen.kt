@@ -3,6 +3,8 @@
 package app.vestari.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -333,6 +335,8 @@ fun InboxScreen() {
     BackHandler(searching && selection.isEmpty()) { searching = false; query = "" }
     BackHandler(selection.isNotEmpty()) { selection.clear() }
     BackHandler(actionKey != null && selection.isEmpty()) { actionKey = null }
+    // Из папки («Госписьма», «Важные»…) «Назад» возвращает ко всем письмам, а не закрывает приложение.
+    BackHandler(nav.folder != null && selection.isEmpty() && !searching && actionKey == null) { nav.folder = null }
 
     fun toggle(m: MailMessage) {
         actionKey = null
@@ -429,6 +433,7 @@ fun InboxScreen() {
                         onAccounts = { nav.accountSheetOpen = true },
                         onSearch = { searching = true },
                         onCompose = { nav.push(Route.Compose()) },
+                        onBack = if (nav.folder != null) ({ nav.folder = null }) else null,
                     )
                     if (accounts.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
@@ -642,18 +647,33 @@ private fun Header(
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
+    val showLogo = app.vestari.ui.components.LocalLook.current.showLogo
+    // Длинное название или идёт проверка почты — заголовок чуть меньше, чтобы не обрезался.
+    val base = titleStyle(titleSize)
+    val style = if (syncing || title.length > 9 || onBack != null) base.copy(fontSize = base.fontSize * 0.82f, lineHeight = base.lineHeight * 0.82f) else base
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Row(
-            Modifier.clip(RoundedCornerShape(50)).bouncyClick(onClick = onAccounts).padding(end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            avatar()
-            Icon(Icons.Rounded.KeyboardArrowDown, "Аккаунты", tint = AppTheme.extra.muted)
+        if (onBack != null) {
+            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-8).dp)) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp))
+            }
         }
-        Spacer(Modifier.width(10.dp))
+        if (!showLogo) {
+            // Без логотипа ящик выбирается по аватару; с логотипом — нажатием на сам логотип.
+            Row(
+                Modifier.clip(RoundedCornerShape(50)).bouncyClick(onClick = onAccounts).padding(end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                avatar()
+                Icon(Icons.Rounded.KeyboardArrowDown, "Аккаунты", tint = AppTheme.extra.muted)
+            }
+            Spacer(Modifier.width(10.dp))
+        }
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            app.vestari.ui.components.BrandTitle(title, titleStyle(titleSize), modifier = Modifier.weight(1f, fill = false))
+            app.vestari.ui.components.BrandTitle(
+                title, style, modifier = Modifier.weight(1f, fill = false), onLogoClick = onAccounts,
+            )
             // Маленький индикатор проверки почты вместо крутилки на весь экран.
             AnimatedVisibility(syncing, enter = fadeIn(), exit = fadeOut()) {
                 CircularProgressIndicator(Modifier.padding(start = 10.dp).size(16.dp), strokeWidth = 2.dp)
