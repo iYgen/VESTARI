@@ -3,6 +3,9 @@
 package app.vestari.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.AnimatedVisibility
@@ -422,7 +425,6 @@ fun InboxScreen() {
             item(key = "header") {
                 Column(Modifier.statusBarsPadding().padding(top = 8.dp)) {
                     Header(
-                        avatar = { AccountAvatar(selectedAccount, 42.dp) },
                         title = when (nav.folder) {
                             null -> "Входящие"
                             FLAGGED -> "Важные"
@@ -435,12 +437,6 @@ fun InboxScreen() {
                         onCompose = { nav.push(Route.Compose()) },
                         onBack = if (nav.folder != null) ({ nav.folder = null }) else null,
                     )
-                    if (accounts.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                            AccountPill(selectedAccount?.email ?: "Все ящики") { nav.accountSheetOpen = true }
-                        }
-                    }
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -640,7 +636,6 @@ private fun PullHint(pull: Float, refreshPx: Float, panelPx: Float, modifier: Mo
 
 @Composable
 private fun Header(
-    avatar: @Composable () -> Unit,
     title: String,
     titleSize: Int,
     syncing: Boolean,
@@ -649,39 +644,33 @@ private fun Header(
     onCompose: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
-    val showLogo = app.vestari.ui.components.LocalLook.current.showLogo
-    // Длинное название или идёт проверка почты — заголовок чуть меньше, чтобы не обрезался.
+    // Длинное название (папка) — заголовок чуть меньше, чтобы не обрезался.
     val base = titleStyle(titleSize)
-    val style = if (syncing || title.length > 9 || onBack != null) base.copy(fontSize = base.fontSize * 0.82f, lineHeight = base.lineHeight * 0.82f) else base
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null) {
-            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-8).dp)) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp))
+    val style = if (title.length > 9) base.copy(fontSize = base.fontSize * 0.82f, lineHeight = base.lineHeight * 0.82f) else base
+    // Слева «≡» (меню ящиков) или стрелка назад, по центру логотип с названием, справа поиск и «написать».
+    Box(Modifier.fillMaxWidth().heightIn(min = 52.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.align(Alignment.CenterStart).offset(x = (-8).dp)) {
+            if (onBack != null) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp)) }
+            } else {
+                IconButton(onClick = onAccounts) { Icon(Icons.Rounded.Menu, "Меню", modifier = Modifier.size(26.dp)) }
             }
         }
-        if (!showLogo) {
-            // Без логотипа ящик выбирается по аватару; с логотипом — нажатием на сам логотип.
-            Row(
-                Modifier.clip(RoundedCornerShape(50)).bouncyClick(onClick = onAccounts).padding(end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                avatar()
-                Icon(Icons.Rounded.KeyboardArrowDown, "Аккаунты", tint = AppTheme.extra.muted)
-            }
-            Spacer(Modifier.width(10.dp))
-        }
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+        // Боковые отступы одинаковые, чтобы заголовок стоял точно по центру экрана.
+        Row(Modifier.padding(horizontal = 88.dp), verticalAlignment = Alignment.CenterVertically) {
             app.vestari.ui.components.BrandTitle(
                 title, style, modifier = Modifier.weight(1f, fill = false), onLogoClick = onAccounts,
             )
-            // Маленький индикатор проверки почты вместо крутилки на весь экран.
-            AnimatedVisibility(syncing, enter = fadeIn(), exit = fadeOut()) {
-                CircularProgressIndicator(Modifier.padding(start = 10.dp).size(16.dp), strokeWidth = 2.dp)
+        }
+        Row(Modifier.align(Alignment.CenterEnd).offset(x = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
+            IconButton(onClick = onCompose) {
+                Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             }
         }
-        IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Поиск", modifier = Modifier.size(26.dp)) }
-        IconButton(onClick = onCompose) {
-            Icon(Icons.Outlined.EditNote, "Написать", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+        // Маленький индикатор проверки почты — под заголовком, не сдвигая его.
+        AnimatedVisibility(syncing, Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
+            LinearProgressIndicator(Modifier.width(48.dp).height(2.dp).clip(RoundedCornerShape(50)))
         }
     }
 }
@@ -754,22 +743,6 @@ private fun SelectionBar(
             IconButton(onClick = onSpam) { Icon(Icons.Outlined.Report, "В спам") }
             IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Удалить", tint = AppTheme.extra.unreadDot) }
         }
-    }
-}
-
-@Composable
-private fun AccountPill(text: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(50))
-            .background(AppTheme.extra.accentSoft)
-            .bouncyClick(onClick = onClick)
-            .padding(start = 18.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.width(6.dp))
-        Icon(Icons.Rounded.KeyboardArrowDown, null, modifier = Modifier.size(20.dp))
     }
 }
 

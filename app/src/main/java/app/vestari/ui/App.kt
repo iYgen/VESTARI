@@ -276,7 +276,10 @@ private fun MainScreen() {
                 Tab.Profile -> ProfileScreen()
             }
         }
-        app.vestari.update.UpdateBanner(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp))
+        // В «Профиле» обновление уже показано карточкой в настройках — второй всплывающий баннер там не нужен.
+        if (nav.tab != Tab.Profile) {
+            app.vestari.update.UpdateBanner(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp))
+        }
         BottomBar(Modifier.align(Alignment.BottomCenter))
     }
 }
