@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -386,21 +387,23 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                 Modifier.weight(1f).verticalScroll(scroll).statusBarsPadding().padding(horizontal = 20.dp),
             ) {
                 // ---------- компактная шапка: назад, логотип с заголовком, действия ----------
-                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Сохранение черновика — в меню «⋮», чтобы заголовок помещался целиком.
+                Row(
+                    Modifier.padding(top = 6.dp).offset(x = (-12).dp).fillMaxWidth().padding(end = 0.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     IconButton(onClick = ::close) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", modifier = Modifier.size(26.dp))
                     }
-                    Spacer(Modifier.width(2.dp))
+                    val base = titleStyle(settings.titleSize)
                     BrandTitle(
                         if (reply != null) "Ответ" else "Новое письмо",
-                        titleStyle(settings.titleSize),
+                        base.copy(fontSize = base.fontSize * 0.8f, lineHeight = base.lineHeight * 0.8f),
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = ::saveDraftNow) {
-                        Icon(Icons.Outlined.Save, "Сохранить черновик", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-                    }
                     MoreMenu(
                         signatureEnabled = from != null,
+                        onSave = ::saveDraftNow,
                         onContacts = ::pickFromContacts,
                         onSignature = { editingSignature = true },
                         onDiscard = {
@@ -417,6 +420,8 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
 
                 // ---------- адресаты ----------
                 Spacer(Modifier.height(14.dp))
+                // Адресаты — в такой же мягкой карточке, как тема и текст: сразу видно, что это поле.
+                Column(Modifier.fillMaxWidth().then(fieldCard()).padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)) {
                 RecipientRow(
                     label = "Кому", list = to, input = toInput,
                     onInput = { toInput = commit(to, it, false); dirty = true },
@@ -462,6 +467,7 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                         Suggestions(focused == Field.Bcc, bccInput, to + cc + bcc, contacts) { c -> bcc += c.email; bccInput = ""; dirty = true }
                     }
                 }
+                }
 
                 // ---------- тема ----------
                 Spacer(Modifier.height(14.dp))
@@ -471,14 +477,15 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                     onFocus = { if (it) focused = Field.Subject },
                     onNext = { runCatching { bodyFocus.requestFocus() } },
                 )
-                Spacer(Modifier.height(18.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(14.dp))
 
                 // ---------- текст письма ----------
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 200.dp)
+                        .heightIn(min = 220.dp)
+                        .then(fieldCard())
+                        .padding(horizontal = 20.dp)
                         .clickable(remember { MutableInteractionSource() }, indication = null) {
                             runCatching { bodyFocus.requestFocus() }
                         },
@@ -498,7 +505,7 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                             .onFocusChanged { if (it.isFocused) focused = Field.Body },
                         decorationBox = { inner ->
                             if (body.text.isEmpty()) {
-                                Text("Напишите сообщение…", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp), color = extra.muted)
+                                Text("Текст письма",style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp), color = extra.muted)
                             }
                             inner()
                         },
@@ -513,19 +520,8 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                     )
                 }
 
-                // ---------- подсказка про тему ----------
-                AnimatedVisibility(subject.isBlank(), enter = fadeIn(), exit = fadeOut() + shrinkVertically()) {
-                    Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Info, null, tint = extra.muted, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Подсказка: добавьте тему, чтобы письмо было легче найти.",
-                            style = MaterialTheme.typography.bodyMedium, color = extra.muted,
-                        )
-                    }
-                }
-
-                // ---------- вложения ----------
+                // ---------- вложения (кнопка «Файл» — внизу) ----------
+                if (attachments.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 AttachmentsRow(
                     attachments = attachments,
@@ -535,6 +531,7 @@ fun ComposeScreen(replyToKey: String?, initialTo: String, draftId: String?) {
                         scope.launch(Dispatchers.IO) { java.io.File(a.path).delete() }
                     },
                 )
+                }
                 Spacer(Modifier.height(16.dp))
             }
 
@@ -599,11 +596,16 @@ private fun FromLine(from: Account?, accounts: List<Account>, savedAt: Long?, on
 }
 
 @Composable
-private fun MoreMenu(signatureEnabled: Boolean, onContacts: () -> Unit, onSignature: () -> Unit, onDiscard: () -> Unit) {
+private fun MoreMenu(signatureEnabled: Boolean, onSave: () -> Unit, onContacts: () -> Unit, onSignature: () -> Unit, onDiscard: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    Box {
+    Box(Modifier.offset(x = 24.dp)) {
         IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Ещё", modifier = Modifier.size(26.dp)) }
         DropdownMenu(menu, onDismissRequest = { menu = false }, containerColor = AppTheme.extra.card) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.Save, null, tint = MaterialTheme.colorScheme.primary) },
+                text = { Text("Сохранить черновик") },
+                onClick = { menu = false; onSave() },
+            )
             DropdownMenuItem(
                 leadingIcon = { Icon(Icons.Outlined.ContactMail, null) },
                 text = { Text("Адрес из контактов") },
@@ -765,6 +767,12 @@ private fun initials(c: Contact): String {
 }
 
 /** Тема письма — в скруглённом поле. */
+@Composable
+private fun fieldCard(): Modifier = Modifier
+    .clip(RoundedCornerShape(18.dp))
+    .background(AppTheme.extra.card.copy(alpha = if (AppTheme.extra.isDark) 0.9f else 0.75f))
+    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+
 @Composable
 private fun SubjectField(subject: String, onChange: (String) -> Unit, onFocus: (Boolean) -> Unit, onNext: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
@@ -957,30 +965,15 @@ private fun BottomActions(
 ) {
     val primary = MaterialTheme.colorScheme.primary
     var scheduleMenu by remember { mutableStateOf(false) }
-    var moreMenu by remember { mutableStateOf(false) }
+    // Все действия подписаны словами: «Файл», «Позже», «Отправить» — без загадочных значков.
     Row(
-        Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .weight(1f)
-                .height(60.dp)
-                .clip(RoundedCornerShape(30.dp))
-                .background(Brush.horizontalGradient(listOf(Color(0xFF4F7BFF), primary, Color(0xFF7B4DFF))))
-                .clickable(enabled = !sending, onClick = onSend),
-            contentAlignment = Alignment.Center,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (sending) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                else Icon(Icons.AutoMirrored.Outlined.Send, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(12.dp))
-                Text(if (sending) "Отправляю…" else "Отправить", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            }
-        }
+        RoundAction(Icons.Outlined.AttachFile, "Файл", onClick = onAttach)
         Box {
-            RoundAction(Icons.Outlined.Schedule, "Отправить позже") { scheduleMenu = true }
+            RoundAction(Icons.Outlined.Schedule, "Позже") { scheduleMenu = true }
             DropdownMenu(scheduleMenu, onDismissRequest = { scheduleMenu = false }, containerColor = AppTheme.extra.card) {
                 Text(
                     "Отправить позже", style = MaterialTheme.typography.labelMedium, color = AppTheme.extra.muted,
@@ -994,23 +987,39 @@ private fun BottomActions(
                 }
             }
         }
-        Box {
-            RoundAction(Icons.Rounded.MoreVert, "Ещё") { moreMenu = true }
-            DropdownMenu(moreMenu, onDismissRequest = { moreMenu = false }, containerColor = AppTheme.extra.card) {
-                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, text = { Text("Прикрепить файл") }, onClick = { moreMenu = false; onAttach() })
-                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.ContactMail, null) }, text = { Text("Копия и скрытая копия") }, onClick = { moreMenu = false; onCopies() })
-                DropdownMenuItem(leadingIcon = { Icon(Icons.Outlined.Save, null) }, text = { Text("Сохранить черновик") }, onClick = { moreMenu = false; onSaveDraft() })
+        Spacer(Modifier.weight(1f))
+        // Кнопка по размеру текста, справа — как в привычных почтовиках.
+        Box(
+            Modifier
+                .height(48.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xFF4F7BFF), primary, Color(0xFF7B4DFF))))
+                .clickable(enabled = !sending, onClick = onSend)
+                .padding(horizontal = 22.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (sending) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                else Icon(Icons.AutoMirrored.Outlined.Send, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(if (sending) "Отправляю…" else "Отправить", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
 
+/** Мягкая кнопка со значком и подписью. */
 @Composable
-private fun RoundAction(icon: ImageVector, description: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(60.dp).clip(RoundedCornerShape(20.dp)).background(AppTheme.extra.accentSoft).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { Icon(icon, description, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp)) }
+private fun RoundAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.height(48.dp).clip(RoundedCornerShape(24.dp)).background(AppTheme.extra.accentSoft)
+            .clickable(onClick = onClick).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
 }
 
 /** Варианты отложенной отправки относительно текущего времени. */
