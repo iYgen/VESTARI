@@ -1,16 +1,6 @@
 package app.vestari.sync
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -18,22 +8,19 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import app.vestari.MainActivity
-import app.vestari.R
-import app.vestari.data.MailMessage
-import app.vestari.data.Smart
 import app.vestari.data.Repository
 import java.util.concurrent.TimeUnit
 
-/** Фоновая проверка почты раз в 15 минут (минимум, который разрешает Android). */
+/**
+ * Фоновая проверка почты раз в 15 минут (минимум, который разрешает Android).
+ * Уведомления о новых письмах показывает [Notifier] — он подписан на результат проверки.
+ */
 class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         Repository.init(applicationContext)
+        Notifier.attach(applicationContext)
         if (Repository.accounts.value.isEmpty()) return Result.success()
-        val fresh = runCatching { Repository.sync() }.getOrElse { return Result.retry() }
-        // «Тихие» рассылки и скидки не беспокоят уведомлениями.
-        val important = fresh.filterNot { Repository.isQuiet(Repository.categoryOf(it)) }
-        if (Repository.settings.value.notifications) Notifier.notify(applicationContext, important)
+        runCatching { Repository.sync() }.getOrElse { return Result.retry() }
         return Result.success()
     }
 
@@ -44,44 +31,6 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork("mail-sync", ExistingPeriodicWorkPolicy.KEEP, req)
-        }
-    }
-}
-
-object Notifier {
-    private const val CHANNEL = "new_mail"
-
-    fun createChannel(context: Context) {
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Новые письма", NotificationManager.IMPORTANCE_DEFAULT)
-        )
-    }
-
-    fun notify(context: Context, messages: List<MailMessage>) {
-        if (messages.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
-        val nm = NotificationManagerCompat.from(context)
-        messages.take(5).forEach { m ->
-            val open = PendingIntent.getActivity(
-                context, m.key.hashCode(),
-                Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_MESSAGE_KEY, m.key)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val code = if (Repository.settings.value.otpCodes) Smart.otp(m) else null
-            val n = NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(if (code != null) "Код $code · ${m.senderTitle}" else m.senderTitle)
-                .setContentText(m.subject)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(m.subject + "\n" + m.preview))
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .setGroup("mail")
-                .build()
-            runCatching { nm.notify(m.key.hashCode(), n) }
         }
     }
 }

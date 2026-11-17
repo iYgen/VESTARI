@@ -200,7 +200,57 @@ data class Settings(
 
     /** Версия правил раскладки, по которой разложены письма (см. [Categorizer.VERSION]). */
     val sortVersion: Int = 0,
+
+    // ---- загрузка писем (экран «Загрузка писем») ----
+    /** Сколько писем запрашивать у сервера за раз. Больше — быстрее, но дольше каждый запрос. */
+    val syncBatch: Int = 500,
+    /** Сколько последних писем загружать в каждой папке; 0 — все. */
+    val syncLimit: Int = 0,
+    /** Докачивать старые письма только по Wi-Fi (новые письма приходят всегда). */
+    val syncWifiOnly: Boolean = false,
+    /** Докачка старых писем поставлена на паузу вручную. */
+    val syncPaused: Boolean = false,
+    /** Показывать ход загрузки в строке состояния (на Android 16 — значок рядом с камерой). */
+    val syncProgressNotice: Boolean = true,
+
+    // ---- уведомления о письмах ----
+    /** Смахнуть письмо в шторке: true — отметить прочитанным, false — только скрыть. */
+    val notifySwipeMarksRead: Boolean = false,
+    /** Сколько писем ящика показывать в шторке одновременно (1…5). */
+    val notifyMax: Int = 5,
 )
+
+/**
+ * Слить уже отсортированный (новые сверху) список писем с новой пачкой за один проход, без пересортировки всего ящика.
+ * Письмо, которое уже есть, заменяется новой версией (превью сохраняется, если в новой его нет).
+ */
+fun mergeSorted(old: List<MailMessage>, add: List<MailMessage>): List<MailMessage> {
+    if (add.isEmpty()) return old
+    val incoming = HashMap<String, MailMessage>(add.size * 2)
+    add.forEach { incoming[it.key] = it }
+    val replaced = HashSet<String>()
+    val base = old.map { o ->
+        val n = incoming[o.key] ?: return@map o
+        replaced += o.key
+        if (n.preview.isEmpty() && o.preview.isNotEmpty()) n.copy(preview = o.preview) else n
+    }
+    val fresh = incoming.values.filter { it.key !in replaced }.sortedByDescending { it.date }
+    if (fresh.isEmpty()) return base
+    val out = ArrayList<MailMessage>(base.size + fresh.size)
+    var i = 0; var j = 0
+    while (i < base.size && j < fresh.size) {
+        if (base[i].date >= fresh[j].date) out += base[i++] else out += fresh[j++]
+    }
+    while (i < base.size) out += base[i++]
+    while (j < fresh.size) out += fresh[j++]
+    return out
+}
+
+/** Варианты размера пачки: подпись и число писем. */
+val SyncBatchOptions = listOf("Экономно" to 150, "Обычно" to 500, "Быстро" to 1000)
+
+/** Варианты ограничения: подпись и число последних писем в папке (0 — все). */
+val SyncLimitOptions = listOf("Все" to 0, "30 000" to 30_000, "10 000" to 10_000, "2 000" to 2_000)
 
 /** Где показывать свою картинку. */
 enum class PicturePlace(val title: String) {
@@ -228,7 +278,13 @@ data class SenderRule(val pattern: String, val categoryId: String, val created: 
 }
 
 /** Ход загрузки писем ящика: сколько уже скачано из общего числа на сервере. */
-data class SyncProgress(val loaded: Int = 0, val total: Int = 0, val active: Boolean = false) {
+data class SyncProgress(
+    val loaded: Int = 0,
+    val total: Int = 0,
+    val active: Boolean = false,
+    /** Почему загрузка стоит: «Пауза», «Жду Wi-Fi»; null — идёт или закончена. */
+    val note: String? = null,
+) {
     val fraction: Float get() = if (total <= 0) 0f else (loaded.toFloat() / total).coerceIn(0f, 1f)
     val loading: Boolean get() = active && (total == 0 || loaded < total)
 }

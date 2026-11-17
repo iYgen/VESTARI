@@ -32,6 +32,7 @@ import kotlinx.serialization.json.Json
 object Repository {
     private lateinit var dir: File
     private lateinit var secrets: Secrets
+    private lateinit var appContext: Context
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Фоновая область приложения: загрузка почты живёт здесь и не обрывается при смене экрана. */
@@ -112,6 +113,7 @@ object Repository {
         if (ready) return
         synchronized(this) {
             if (ready) return
+            appContext = context.applicationContext
             dir = File(context.filesDir, "store").apply { mkdirs() }
             secrets = Secrets(context.applicationContext)
             _accounts.value = read("accounts.json") ?: emptyList()
@@ -403,11 +405,14 @@ object Repository {
                         }
                     }
                 }.awaitAll().flatten()
-            }
+            }.also { fresh -> if (fresh.isNotEmpty()) runCatching { newMailListener?.invoke(fresh) } }
         } finally {
             _syncing.value = false
         }
     }
+
+    /** Кто узнаёт о новых письмах после проверки почты (уведомления в шторке). */
+    @Volatile var newMailListener: ((List<MailMessage>) -> Unit)? = null
 
     private fun syncHead(acc: Account, own: Set<String>): List<MailMessage> {
         setProgress(acc.id) { it.copy(active = true) }
@@ -455,13 +460,14 @@ object Repository {
             persist("sync_${acc.id}.json", states.mapValues { it.value.uidValidity })
 
             val cached = _messages.value[acc.id].orEmpty().mapTo(HashSet()) { it.folder to it.uid }
+            // Ограничение из настроек: только N последних писем каждой папки (0 — все).
+            val limit = _settings.value.syncLimit
             val missing = folders.map { f ->
-                val uids = states.getValue(f.fullName).flags.keys
-                    .filter { (f.fullName to it) !in cached }
-                    .sortedDescending() // новые письма (с большим UID) — первыми
-                Pending(f, ArrayDeque(uids))
+                val all = states.getValue(f.fullName).flags.keys.sortedDescending() // новые (больший UID) — первыми
+                val wanted = if (limit > 0) all.take(limit) else all
+                Pending(f, ArrayDeque(wanted.filter { (f.fullName to it) !in cached }))
             }
-            val total = states.values.sumOf { it.flags.size }
+            val total = states.values.sumOf { if (limit > 0) minOf(limit, it.flags.size) else it.flags.size }
             setProgress(acc.id) { it.copy(total = total, loaded = cached.size.coerceAtMost(total), active = true) }
 
             // Свежие письма — сразу, остальное докачает backfill.
@@ -481,37 +487,83 @@ object Repository {
         }
     }
 
+    /**
+     * Докачка старых писем. Чтобы телефон не тормозил на десятках тысяч писем:
+     * пачки крупные (из настроек), список на экране обновляется не чаще раза в полторы секунды,
+     * а на диск сохраняется раз в полминуты и в конце. Пауза и «только по Wi-Fi» проверяются перед каждой пачкой.
+     */
     private fun startBackfill(acc: Account, own: Set<String>, catByFolder: Map<String, String?>) {
         if (pending[acc.id].isNullOrEmpty()) {
-            setProgress(acc.id) { it.copy(active = false) }
+            setProgress(acc.id) { it.copy(active = false, note = null) }
             return
         }
+        stopReason()?.let { why -> setProgress(acc.id) { it.copy(active = false, note = why) }; return }
         if (backfills[acc.id]?.isActive == true) return
         backfills[acc.id] = io.launch {
+            var stoppedBy: String? = null
+            val buffer = ArrayList<MailMessage>()
+            fun flush() {
+                if (buffer.isEmpty()) return
+                merge(acc.id, buffer.toList(), null, own)
+                buffer.clear()
+                updateLoaded(acc.id)
+            }
             try {
+                setProgress(acc.id) { it.copy(active = true, note = null) }
                 ImapConnection(acc, password(acc)).use { c ->
-                    var batches = 0
+                    var lastShown = System.currentTimeMillis()
+                    var lastSaved = lastShown
                     while (true) {
                         ensureActive()
+                        stopReason()?.let { stoppedBy = it }
+                        if (stoppedBy != null) break
                         val p = pending[acc.id]?.firstOrNull { it.uids.isNotEmpty() } ?: break
-                        val chunk = take(p.uids, 150)
-                        val got = MailClient.fetchHeaders(c, acc, p.folder.fullName, chunk)
-                        merge(acc.id, got, catByFolder[p.folder.fullName], own)
-                        updateLoaded(acc.id)
-                        if (++batches % 8 == 0) persistMessages(acc.id)
+                        val chunk = take(p.uids, _settings.value.syncBatch.coerceIn(50, 2000))
+                        buffer += MailClient.fetchHeaders(c, acc, p.folder.fullName, chunk)
+                        val now = System.currentTimeMillis()
+                        if (now - lastShown > 1500) { flush(); lastShown = now }
+                        else setProgress(acc.id) { it.copy(loaded = ((_messages.value[acc.id]?.size ?: 0) + buffer.size).coerceAtMost(maxOf(it.total, 1))) }
+                        if (now - lastSaved > 30_000) { persistMessages(acc.id); lastSaved = now }
                     }
                 }
-                setProgress(acc.id) { it.copy(loaded = it.total) }
+                flush()
+                if (stoppedBy == null) setProgress(acc.id) { it.copy(loaded = it.total) }
             } catch (e: CancellationException) {
+                flush()
                 throw e
             } catch (e: Exception) {
+                flush()
                 _lastError.value = "${acc.email}: загрузка прервалась (${describe(e)}). Продолжу при следующей проверке."
             } finally {
                 persistMessages(acc.id)
-                setProgress(acc.id) { it.copy(active = false) }
+                setProgress(acc.id) { it.copy(active = false, note = stoppedBy) }
             }
         }
     }
+
+    /** Почему докачку сейчас нельзя вести: пауза или нет Wi-Fi (если включено «только по Wi-Fi»). */
+    private fun stopReason(): String? {
+        val s = _settings.value
+        if (s.syncPaused) return "Пауза"
+        if (s.syncWifiOnly) {
+            val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
+            if (cm?.isActiveNetworkMetered != false) return "Жду Wi-Fi"
+        }
+        return null
+    }
+
+    /** Пауза или продолжение докачки старых писем (кнопка в настройках «Загрузка писем»). */
+    fun setLoadingPaused(paused: Boolean) {
+        updateSettings { it.copy(syncPaused = paused) }
+        if (paused) {
+            backfills.values.forEach { it.cancel() }
+            _progress.update { map -> map.mapValues { (_, p) -> p.copy(active = false, note = if (p.loaded < p.total) "Пауза" else null) } }
+        } else refresh()
+    }
+
+    /** Осталось ли что-то докачать (для кнопки «Продолжить»). */
+    fun hasPending(): Boolean = pending.values.any { l -> l.any { it.uids.isNotEmpty() } } ||
+        _progress.value.values.any { it.total > 0 && it.loaded < it.total }
 
     private fun take(q: ArrayDeque<Long>, n: Int): List<Long> = synchronized(q) {
         List(minOf(n, q.size)) { q.removeFirst() }
@@ -526,13 +578,7 @@ object Repository {
         val ready = add.map { it.copy(autoCategory = recategorize(it, folderCategory, own)) }
         _messages.update { map ->
             if (accountId !in map) return@update map // ящик успели удалить
-            val byKey = LinkedHashMap<String, MailMessage>()
-            map[accountId].orEmpty().forEach { byKey[it.key] = it }
-            ready.forEach { m ->
-                val prev = byKey[m.key]
-                byKey[m.key] = if (prev != null && m.preview.isEmpty()) m.copy(preview = prev.preview) else m
-            }
-            map + (accountId to byKey.values.sortedByDescending { it.date })
+            map + (accountId to mergeSorted(map[accountId].orEmpty(), ready))
         }
         return ready
     }
@@ -618,7 +664,18 @@ object Repository {
         val keys = changed.map { it.key }.toSet()
         _messages.update { map -> map.mapValues { (_, l) -> l.map { if (it.key in keys) it.copy(seen = seen) else it } } }
         changed.map { it.accountId }.distinct().forEach { persistMessages(it) }
-        changed.forEach { m -> remote(m) { acc, pass -> MailClient.setFlag(acc, pass, m.folder, m.uid, Flags.Flag.SEEN, seen) } }
+        // Одно подключение и одна команда на папку, а не вход на сервер ради каждого письма.
+        changed.groupBy { it.accountId to it.folder }.forEach { (k, msgs) ->
+            remote(msgs.first()) { acc, pass -> MailClient.setFlagMany(acc, pass, k.second, msgs.map { it.uid }, Flags.Flag.SEEN, seen) }
+        }
+    }
+
+    /** Отметить письмо прочитанным и дождаться ответа сервера (кнопка в уведомлении). */
+    suspend fun markSeenNow(key: String): Boolean {
+        val m = find(key) ?: return false
+        patch(m) { it.copy(seen = true) }
+        val acc = account(m.accountId) ?: return false
+        return runCatching { MailClient.setFlag(acc, password(acc), m.folder, m.uid, Flags.Flag.SEEN, true) }.isSuccess
     }
 
     /** Спрятать сразу несколько писем (удаление или спам с возможностью отмены). */
@@ -771,9 +828,16 @@ object Repository {
         if (f.exists()) json.decodeFromString<T>(f.readText()) else null
     }.getOrNull()
 
+    /** Последняя запланированная запись каждого файла: новая отменяет ещё не начатую старую. */
+    private val writes = ConcurrentHashMap<String, Job>()
+
     private inline fun <reified T> persist(name: String, value: T) {
-        io.launch {
+        writes[name]?.cancel()
+        writes[name] = io.launch {
+            // Большие списки писем пишем с небольшой задержкой: частые сохранения подряд сливаются в одно.
+            if (name.startsWith("messages_")) kotlinx.coroutines.delay(400)
             val text = json.encodeToString(value)
+            ensureActive()
             writeLock.withLock {
                 val tmp = File(dir, "$name.tmp")
                 tmp.writeText(text)

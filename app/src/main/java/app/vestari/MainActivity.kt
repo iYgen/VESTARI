@@ -20,6 +20,7 @@ class VestariApplication : Application() {
         super.onCreate()
         Repository.init(this)
         Notifier.createChannel(this)
+        Notifier.attach(this)
         SyncWorker.schedule(this)
     }
 }

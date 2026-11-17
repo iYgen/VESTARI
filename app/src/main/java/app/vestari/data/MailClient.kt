@@ -207,6 +207,17 @@ object MailClient {
             once(acc, password, folder, Folder.READ_WRITE) { f -> f.getMessageByUID(uid)?.setFlag(flag, value) }
         }
 
+    /** Флаг сразу у многих писем одной папки — одной командой UID STORE. */
+    suspend fun setFlagMany(acc: Account, password: String, folder: String, uids: List<Long>, flag: Flags.Flag, value: Boolean) =
+        withContext(Dispatchers.IO) {
+            once(acc, password, folder, Folder.READ_WRITE) { f ->
+                uids.chunked(500).forEach { part ->
+                    val msgs = f.getMessagesByUID(part.toLongArray()).filterNotNull().toTypedArray()
+                    if (msgs.isNotEmpty()) f.setFlags(msgs, Flags(flag), value)
+                }
+            }
+        }
+
     /** Удаление = перенос в корзину (если сервер её отдаёт), иначе пометка DELETED. */
     suspend fun delete(acc: Account, password: String, folder: String, uid: Long) = withContext(Dispatchers.IO) {
         once(acc, password, folder, Folder.READ_WRITE) { f ->

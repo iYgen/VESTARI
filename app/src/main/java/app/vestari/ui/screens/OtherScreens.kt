@@ -62,6 +62,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import app.vestari.data.SyncBatchOptions
+import app.vestari.data.SyncLimitOptions
 import app.vestari.data.Account
 import app.vestari.data.Category
 import androidx.compose.ui.text.style.TextOverflow
@@ -452,7 +454,22 @@ fun ProfileScreen() {
                     toasts.show(if (fresh.isEmpty()) "Новых писем нет" else "Новых писем: ${fresh.size}")
                 }
             }
+            if (settings.notifications) {
+                SwitchRow(
+                    "Смахнуть — значит прочитано",
+                    if (settings.notifySwipeMarksRead) "Смахнутое из шторки письмо отмечается прочитанным и в почте"
+                    else "Смахнутое письмо просто скрывается. Прочитать — кнопкой «Прочитано»",
+                    settings.notifySwipeMarksRead,
+                ) { v -> Repository.updateSettings { it.copy(notifySwipeMarksRead = v) } }
+                Text("Писем в шторке на один ящик", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(8.dp))
+                val maxOptions = listOf(1, 3, 5)
+                Segmented(maxOptions.map { it.toString() }, maxOptions.indexOf(settings.notifyMax).coerceAtLeast(0)) { i ->
+                    Repository.updateSettings { it.copy(notifyMax = maxOptions[i]) }
+                }
+            }
         }
+
+        Card { LoadingSettings() }
 
         Text(
             "Vestari работает с почтой напрямую по IMAP/SMTP. Данные и пароли хранятся только на телефоне.",
@@ -771,6 +788,67 @@ private fun FolderOrder() {
 internal fun Card(content: @Composable () -> Unit) {
     Surface(shape = RoundedCornerShape(24.dp), color = AppTheme.extra.card, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) { content() }
+    }
+}
+
+/** «Загрузка писем»: ход, пауза, размер пачки, сколько писем хранить, только Wi-Fi, значок в строке состояния. */
+@Composable
+private fun LoadingSettings() {
+    val settings by Repository.settings.collectAsState()
+    val progressMap by Repository.progress.collectAsState()
+    val loaded = progressMap.values.sumOf { it.loaded }
+    val total = progressMap.values.sumOf { it.total }
+    val loading = progressMap.values.any { it.loading }
+    val note = progressMap.values.firstNotNullOfOrNull { it.note }
+    fun fmt(n: Int) = "%,d".format(n).replace(',', ' ')
+
+    Text("Загрузка писем", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 8.dp))
+    Text(
+        when {
+            total == 0 -> "Письма ещё не считались"
+            loaded >= total -> "Загружено всё: ${fmt(total)} писем"
+            note != null -> "$note · ${fmt(loaded)} из ${fmt(total)}"
+            else -> "${fmt(loaded)} из ${fmt(total)} · ${(loaded * 100L / total)}%"
+        },
+        style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+    )
+    if (total > 0 && loaded < total) {
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { (loaded.toFloat() / total).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+        )
+        SoftRow(
+            Icons.Outlined.Refresh,
+            if (settings.syncPaused) "Продолжить загрузку" else if (loading) "Поставить на паузу" else "Догрузить сейчас",
+        ) { Repository.setLoadingPaused(!settings.syncPaused && loading) }
+    }
+
+    Text("Скорость", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(8.dp))
+    Segmented(SyncBatchOptions.map { it.first }, SyncBatchOptions.indexOfFirst { it.second == settings.syncBatch }.coerceAtLeast(0)) { i ->
+        Repository.updateSettings { it.copy(syncBatch = SyncBatchOptions[i].second) }
+    }
+    Text(
+        "Сколько писем просить у сервера за раз. «Быстро» — меньше ожидания, но больше трафика за раз",
+        style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+
+    Text("Хранить писем в каждой папке", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(8.dp))
+    Segmented(SyncLimitOptions.map { it.first }, SyncLimitOptions.indexOfFirst { it.second == settings.syncLimit }.coerceAtLeast(0)) { i ->
+        Repository.updateSettings { it.copy(syncLimit = SyncLimitOptions[i].second) }
+        Repository.refresh()
+    }
+    Text(
+        "Самые новые. Старые письма остаются на сервере, их можно найти в почте",
+        style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+
+    SwitchRow("Только по Wi-Fi", "Старые письма докачиваются, только когда нет мобильного трафика. Новые приходят всегда", settings.syncWifiOnly) { v ->
+        Repository.updateSettings { it.copy(syncWifiOnly = v) }
+        Repository.refresh()
+    }
+    SwitchRow("Ход загрузки в строке состояния", "Процент рядом с часами (Android 16) и уведомление с кнопкой «Пауза»", settings.syncProgressNotice) { v ->
+        Repository.updateSettings { it.copy(syncProgressNotice = v) }
     }
 }
 
