@@ -321,7 +321,8 @@ object Repository {
     // ---------- ящики ----------
 
     suspend fun addAccount(email: String, name: String, password: String, provider: Provider,
-                           imapHost: String, imapPort: Int, smtpHost: String, smtpPort: Int): Account {
+                           imapHost: String, imapPort: Int, smtpHost: String, smtpPort: Int,
+                           imapSecurity: String = "ssl", smtpSecurity: String = ""): Account {
         val acc = Account(
             id = UUID.randomUUID().toString().take(12),
             email = email.trim().lowercase(),
@@ -329,6 +330,7 @@ object Repository {
             provider = provider.id,
             imapHost = imapHost.trim(), imapPort = imapPort,
             smtpHost = smtpHost.trim(), smtpPort = smtpPort,
+            imapSecurity = imapSecurity, smtpSecurity = smtpSecurity,
             color = _accounts.value.size,
         )
         require(_accounts.value.none { it.email == acc.email }) { "Этот ящик уже добавлен." }
@@ -689,6 +691,18 @@ object Repository {
     suspend fun send(accountId: String, to: String, subject: String, text: String, inReplyTo: String?) {
         val acc = account(accountId) ?: throw IllegalStateException("Выберите ящик")
         MailClient.send(acc, password(acc), to, subject, text, inReplyTo)
+    }
+
+    /**
+     * Сменить серверы, порты, шифрование или пароль у подключённого ящика.
+     * Сначала проверяем подключение; не вышло — ничего не меняем. Пустой [newPassword] — пароль прежний.
+     */
+    suspend fun editAccount(updated: Account, newPassword: String?) {
+        val pass = newPassword?.takeIf { it.isNotBlank() } ?: password(updated)
+        MailClient.test(updated, pass)
+        if (!newPassword.isNullOrBlank()) secrets.put(updated.id, newPassword)
+        updateAccount(updated)
+        refresh(updated.id)
     }
 
     fun updateAccount(acc: Account) {

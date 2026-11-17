@@ -12,6 +12,10 @@ data class Account(
     val imapPort: Int,
     val smtpHost: String,
     val smtpPort: Int,
+    /** Шифрование IMAP: "ssl" — SSL/TLS сразу при подключении, "starttls", "none". */
+    val imapSecurity: String = "ssl",
+    /** Шифрование SMTP. Пусто — по порту, как было раньше: 465 → SSL/TLS, иначе STARTTLS. */
+    val smtpSecurity: String = "",
     /** Индекс цвета аватарки в [app.vestari.ui.theme.AvatarColors]. */
     val color: Int = 0,
     /** Подпись, которая добавляется в конец новых писем с этого ящика. */
@@ -347,3 +351,16 @@ object Providers {
         return all.firstOrNull { domain in it.domains } ?: byId("custom")
     }
 }
+
+/** Варианты шифрования соединения с сервером почты: подпись → значение в [Account]. */
+val SecurityOptions = listOf("SSL/TLS" to "ssl", "STARTTLS" to "starttls", "Нет" to "none")
+
+/** Обычное шифрование для порта: 465/993/995 — SSL/TLS сразу, 25/587/143 — STARTTLS, иначе null (не угадать). */
+fun securityForPort(port: Int): String? = when (port) {
+    465, 993, 995 -> "ssl"
+    25, 587, 143, 110 -> "starttls"
+    else -> null
+}
+
+val Account.smtpMode: String get() = smtpSecurity.ifBlank { if (smtpPort == 465) "ssl" else "starttls" }
+val Account.imapMode: String get() = imapSecurity.ifBlank { "ssl" }

@@ -375,12 +375,15 @@ fun ProfileScreen() {
         Card {
             Text("Почтовые ящики", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
             accounts.forEach { acc ->
-                Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { nav.push(Route.EditAccount(acc.id)) }.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     AccountAvatar(acc, 40.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(acc.email, style = MaterialTheme.typography.bodyLarge)
-                        Text(Providers.byId(acc.provider).title, style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
+                        Text(Providers.byId(acc.provider).title + " · настройки", style = MaterialTheme.typography.bodySmall, color = AppTheme.extra.muted)
                     }
                     IconButton(onClick = { removing = acc }) { Icon(Icons.Outlined.Delete, "Удалить", tint = AppTheme.extra.muted) }
                 }

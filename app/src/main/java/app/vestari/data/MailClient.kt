@@ -50,28 +50,36 @@ object MailClient {
 
     internal fun session(acc: Account): Session {
         val p = Properties().apply {
-            put("mail.store.protocol", "imaps")
-            put("mail.imaps.host", acc.imapHost)
-            put("mail.imaps.port", acc.imapPort.toString())
-            put("mail.imaps.ssl.enable", "true")
-            put("mail.imaps.connectiontimeout", "20000")
-            put("mail.imaps.timeout", "60000")
-            put("mail.imaps.partialfetch", "false")
-            put("mail.imaps.peek", "true")
+            // IMAP: SSL/TLS — протокол imaps, STARTTLS и «без шифрования» — обычный imap.
+            val ip = imapProtocol(acc)
+            val imapTls = acc.imapMode == "starttls"
+            put("mail.store.protocol", ip)
+            put("mail.$ip.host", acc.imapHost)
+            put("mail.$ip.port", acc.imapPort.toString())
+            put("mail.$ip.ssl.enable", (ip == "imaps").toString())
+            put("mail.$ip.starttls.enable", imapTls.toString())
+            put("mail.$ip.starttls.required", imapTls.toString())
+            put("mail.$ip.connectiontimeout", "20000")
+            put("mail.$ip.timeout", "60000")
+            put("mail.$ip.partialfetch", "false")
+            put("mail.$ip.peek", "true")
 
-            val ssl = acc.smtpPort == 465
+            // SMTP: SSL/TLS сразу (implicit), STARTTLS или без шифрования — как выбрано в ящике.
+            val smtp = acc.smtpMode
             put("mail.smtp.host", acc.smtpHost)
             put("mail.smtp.port", acc.smtpPort.toString())
             put("mail.smtp.auth", "true")
-            put("mail.smtp.ssl.enable", ssl.toString())
-            put("mail.smtp.starttls.enable", (!ssl).toString())
-            put("mail.smtp.starttls.required", (!ssl).toString())
+            put("mail.smtp.ssl.enable", (smtp == "ssl").toString())
+            put("mail.smtp.starttls.enable", (smtp == "starttls").toString())
+            put("mail.smtp.starttls.required", (smtp == "starttls").toString())
             put("mail.smtp.connectiontimeout", "15000")
             put("mail.smtp.timeout", "30000")
             put("mail.mime.decodetext.strict", "false")
         }
         return Session.getInstance(p)
     }
+
+    internal fun imapProtocol(acc: Account) = if (acc.imapMode == "ssl") "imaps" else "imap"
 
     /** Проверка логина и пароля при добавлении ящика. Бросает исключение с понятным текстом. */
     suspend fun test(acc: Account, password: String) = withContext(Dispatchers.IO) {
@@ -80,7 +88,7 @@ object MailClient {
         } catch (e: AuthenticationFailedException) {
             throw IllegalStateException("Почта не приняла пароль. Нужен именно пароль для внешнего приложения, а не обычный.")
         } catch (e: MessagingException) {
-            throw IllegalStateException("Не удалось подключиться к ${acc.imapHost}: ${e.message ?: e.javaClass.simpleName}")
+            throw IllegalStateException("Не удалось подключиться к ${acc.imapHost}:${acc.imapPort}. Проверьте порт и шифрование IMAP. ${e.message ?: e.javaClass.simpleName}")
         }
         // Отправку тоже проверяем, чтобы не узнать о проблеме при первом письме.
         try {
@@ -88,7 +96,7 @@ object MailClient {
             t.connect(acc.smtpHost, acc.smtpPort, acc.email, password)
             t.close()
         } catch (e: MessagingException) {
-            throw IllegalStateException("Чтение работает, но отправка через ${acc.smtpHost} — нет: ${e.message ?: ""}")
+            throw IllegalStateException("Чтение работает, но отправка через ${acc.smtpHost}:${acc.smtpPort} — нет. Проверьте порт и шифрование SMTP в «Настройках серверов». ${e.message ?: ""}")
         }
     }
 
@@ -364,7 +372,7 @@ class ImapConnection(private val acc: Account, private val password: String) : C
     private fun connectedStore(): Store {
         store?.takeIf { it.isConnected }?.let { return it }
         close()
-        val s = MailClient.session(acc).getStore("imaps")
+        val s = MailClient.session(acc).getStore(MailClient.imapProtocol(acc))
         s.connect(acc.imapHost, acc.imapPort, acc.email, password)
         store = s
         return s

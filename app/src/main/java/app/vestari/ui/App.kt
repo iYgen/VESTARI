@@ -90,6 +90,7 @@ sealed interface Route {
     data object Drafts : Route
     data class ServerFolder(val accountId: String, val folder: String, val title: String) : Route
     data object AddAccount : Route
+    data class EditAccount(val id: String) : Route
     data object Smart : Route
     data object Appearance : Route
 }
@@ -215,6 +216,7 @@ fun VestariApp(openMessageKey: String?, onOpenedFromNotification: () -> Unit) {
                                 Route.Drafts -> app.vestari.ui.screens.DraftsScreen()
                                 is Route.ServerFolder -> app.vestari.ui.screens.ServerFolderScreen(route.accountId, route.folder, route.title)
                                 Route.AddAccount -> AddAccountScreen()
+                                is Route.EditAccount -> AddAccountScreen(route.id)
                                 Route.Smart -> app.vestari.ui.screens.SmartScreen()
                                 Route.Appearance -> app.vestari.ui.screens.AppearanceScreen()
                             }
